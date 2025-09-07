@@ -85,6 +85,11 @@ export default function EEMap() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const wsRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef(null);
+  const pingIntervalRef = useRef(null);
+  const connectingRef = useRef(false);
+  const firstConnectTimerRef = useRef(null);
 
   // Backend endpoints
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
@@ -192,9 +197,9 @@ export default function EEMap() {
           setSelectedGeom(null);
         });
 
-        // Ensure Google API and Earth Engine are loaded; try proxy first, then direct as fallback.
-        await ensureGlobal("gapi", ["/api/proxy-gapi", "https://apis.google.com/js/api.js"]);
-        await ensureGlobal("ee", ["/api/proxy-ee", "https://earthengine.googleapis.com/ee_api_js.js"]);
+        // Wait for globals provided by layout scripts (loaded beforeInteractive in app/layout.js)
+        await waitForGlobal("gapi");
+        await waitForGlobal("ee");
 
         // Authenticate & initialize Earth Engine
         const clientId = process.env.NEXT_PUBLIC_EE_CLIENT_ID;
@@ -309,50 +314,161 @@ export default function EEMap() {
     };
   }, []);
 
-  // WebSocket chat connection
+  // WebSocket chat connection with retry/backoff
   useEffect(() => {
-    let ws;
-    try {
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+    let cancelled = false;
 
-      ws.onopen = () => {
-        setChatMessages((m) => [...m, { from: "system", text: "Connected to chat." }]);
-      };
-      ws.onmessage = (ev) => {
+    function scheduleReconnect() {
+      if (cancelled) return;
+      const attempt = (reconnectAttemptsRef.current || 0) + 1;
+      reconnectAttemptsRef.current = attempt;
+      // Exponential backoff: 0.5s, 1s, 2s, 4s, ... capped at 10s
+      const delay = Math.min(10000, 500 * Math.pow(2, attempt - 1));
+      try {
+        clearTimeout(reconnectTimerRef.current);
+      } catch {}
+      reconnectTimerRef.current = setTimeout(() => {
+        if (!cancelled) openSocket();
+      }, delay);
+    }
+
+    function openSocket() {
+      try {
+        // Avoid duplicate connects during StrictMode re-mounts
+        if (
+          wsRef.current &&
+          (wsRef.current.readyState === WebSocket.OPEN ||
+            wsRef.current.readyState === WebSocket.CONNECTING)
+        ) {
+          return;
+        }
+        if (connectingRef.current) return;
+
+        // Upgrade to wss if page is https and env provides ws://
+        const pageIsHttps =
+          typeof window !== "undefined" && window.location.protocol === "https:";
+        // Normalize hostname to match the page host (fixes 127.0.0.1 vs localhost mismatches)
+        let baseUrl = wsUrl;
         try {
-          const data = JSON.parse(ev.data);
-          if (data?.type === "message") {
-            setChatMessages((m) => [
-              ...m,
-              { from: data.from || "assistant", text: data.message },
-            ]);
-          } else if (data?.type === "info") {
-            setChatMessages((m) => [...m, { from: "system", text: data.message }]);
-          } else if (data?.type === "error") {
-            setChatMessages((m) => [
-              ...m,
-              { from: "system", text: `Error: ${data.message}` },
-            ]);
-          } else {
-            setChatMessages((m) => [...m, { from: "system", text: ev.data }]);
+          const u = new URL(wsUrl);
+          const host =
+            (typeof window !== "undefined" && window.location.hostname) || u.hostname;
+          if (u.hostname !== host) {
+            u.hostname = host;
+            baseUrl = u.toString();
           }
         } catch {
-          setChatMessages((m) => [...m, { from: "assistant", text: ev.data }]);
+          // ignore URL parse errors, fall back to wsUrl
         }
-      };
-      ws.onerror = () => {
-        setChatMessages((m) => [...m, { from: "system", text: "WebSocket error" }]);
-      };
-      ws.onclose = () => {
-        setChatMessages((m) => [...m, { from: "system", text: "Disconnected" }]);
-      };
-    } catch {
-      // ignore
+        const url =
+          pageIsHttps && baseUrl.startsWith("ws://")
+            ? "wss://" + baseUrl.slice(5)
+            : baseUrl;
+
+        const ws = new WebSocket(url);
+        connectingRef.current = true;
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          connectingRef.current = false;
+          reconnectAttemptsRef.current = 0;
+          try {
+            clearInterval(pingIntervalRef.current);
+          } catch {}
+          pingIntervalRef.current = setInterval(() => {
+            try {
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: "ping" }));
+              }
+            } catch {
+              // ignore
+            }
+          }, 25000); // keepalive every 25s
+          setChatMessages((m) => [
+            ...m,
+            { from: "system", text: "Connected to chat." },
+          ]);
+        };
+        ws.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data?.type === "message") {
+              setChatMessages((m) => [
+                ...m,
+                { from: data.from || "assistant", text: data.message },
+              ]);
+            } else if (data?.type === "info") {
+              setChatMessages((m) => [
+                ...m,
+                { from: "system", text: data.message },
+              ]);
+            } else if (data?.type === "error") {
+              setChatMessages((m) => [
+                ...m,
+                { from: "system", text: `Error: ${data.message}` },
+              ]);
+            } else {
+              setChatMessages((m) => [
+                ...m,
+                { from: "system", text: ev.data },
+              ]);
+            }
+          } catch {
+            setChatMessages((m) => [
+              ...m,
+              { from: "assistant", text: ev.data },
+            ]);
+          }
+        };
+        ws.onerror = () => {
+          connectingRef.current = false;
+          setChatMessages((m) => [
+            ...m,
+            { from: "system", text: "WebSocket error" },
+          ]);
+          // Proactively schedule a reconnect on error as some environments fire error without close
+          scheduleReconnect();
+        };
+        ws.onclose = () => {
+          connectingRef.current = false;
+          try {
+            clearInterval(pingIntervalRef.current);
+          } catch {}
+          setChatMessages((m) => [
+            ...m,
+            { from: "system", text: "Disconnected" },
+          ]);
+          scheduleReconnect();
+        };
+      } catch {
+        scheduleReconnect();
+      }
     }
+
+    // Delay initial connect slightly to avoid StrictMode double-invoke race
+    try {
+      clearTimeout(firstConnectTimerRef.current);
+    } catch {}
+    firstConnectTimerRef.current = setTimeout(() => {
+      if (!cancelled) openSocket();
+    }, 800);
+
     return () => {
+      cancelled = true;
       try {
-        wsRef.current?.close();
+        clearTimeout(reconnectTimerRef.current);
+      } catch {}
+      try {
+        clearTimeout(firstConnectTimerRef.current);
+      } catch {}
+      try {
+        clearInterval(pingIntervalRef.current);
+      } catch {}
+      try {
+        // Only actively close if open; avoid closing CONNECTING sockets (causes spurious errors)
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.close();
+        }
         wsRef.current = null;
       } catch {}
     };

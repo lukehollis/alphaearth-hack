@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const upstream = "https://earthengine.googleapis.com/ee_api_js.js";
+  const upstream = "https://www.gstatic.com/earthengine/ee_api_js.js";
   try {
     const res = await fetch(upstream, {
       method: "GET",

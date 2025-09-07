@@ -8,6 +8,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+import logging
+logger = logging.getLogger("policy_proof.ws")
+
 from .services.analyze import run_mock_srd_analysis
 from .services.llm import stream_text, stream_ollama, stream_sambanova, stream_text_anakin
 
@@ -81,8 +84,10 @@ def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
 
 @app.websocket("/ws/chat")
 async def chat_ws(ws: WebSocket):
+    logger.info("WS: handshake start")
     # Accept WebSocket
     await ws.accept()
+    logger.info("WS: accepted connection")
     system_prompt = (
         "You are Policy Proof assistant. Help users evaluate climate policy impact using "
         "Spatial Regression Discontinuity (SRD). Keep responses concise and actionable."
@@ -110,6 +115,10 @@ async def chat_ws(ws: WebSocket):
             raw = await ws.receive_text()
             try:
                 data = json.loads(raw)
+                # Handle client keepalive ping frames
+                if isinstance(data, dict) and data.get("type") == "ping":
+                    await send_json({"type": "pong"})
+                    continue
                 msg = data.get("message")
             except Exception:
                 msg = raw
@@ -120,6 +129,10 @@ async def chat_ws(ws: WebSocket):
 
             # Append user message
             history.append({"role": "user", "content": msg})
+            try:
+                logger.info("WS: received user message (%d chars)", len(msg))
+            except Exception:
+                pass
 
             # Route to selected LLM stream and aggregate into a single assistant message
             reply_text = ""
@@ -158,11 +171,17 @@ async def chat_ws(ws: WebSocket):
 
             # Append assistant message to history and send to client
             history.append({"role": "assistant", "content": reply_text})
+            try:
+                logger.info("WS: sending assistant reply (%d chars)", len(reply_text))
+            except Exception:
+                pass
             await send_json({"type": "message", "from": "assistant", "message": reply_text})
 
     except WebSocketDisconnect:
+        logger.info("WS: client disconnected")
         return
     except Exception as e:
+        logger.exception("WS: server error")
         await send_json({"type": "error", "message": f"Server error: {e}"})
 
 
