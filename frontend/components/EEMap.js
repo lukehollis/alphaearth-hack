@@ -4,73 +4,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// Utility to load external scripts sequentially
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    // Avoid inserting the same script multiple times
-    if (document.querySelector(`script[src="${src}"]`)) return resolve();
-    const s = document.createElement("script");
-    s.src = src;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = (e) => reject(new Error(`Failed to load script ${src}`));
-    document.head.appendChild(s);
-  });
-}
 
-function waitForGlobal(name, timeout = 20000) {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    (function check() {
-      if (typeof window !== "undefined" && window[name]) {
-        resolve(window[name]);
-        return;
-      }
-      if (Date.now() - start > timeout) {
-        reject(new Error(`Global ${name} did not load in time`));
-        return;
-      }
-      setTimeout(check, 100);
-    })();
-  });
-}
 
-/**
- * Helper: load a global by trying a list of script sources in order, with per-attempt timeout.
- * Tries each candidate src sequentially until the given global appears, or throws with the last error.
- */
-async function ensureGlobal(name, candidates, perAttemptMs = 7000) {
-  if (typeof window !== "undefined" && window[name]) return window[name];
 
-  let lastErr = null;
-  for (const src of candidates) {
-    try {
-      await loadScript(src);
-      const val = await waitForGlobal(name, perAttemptMs);
-      return val;
-    } catch (e) {
-      lastErr = e;
-      // try next candidate
-    }
-  }
-  throw new Error(
-    `Failed to load ${name} from candidates: ${candidates.join(", ")}. Last error: ${
-      lastErr?.message || String(lastErr)
-    }`
-  );
-}
-
-// Wrap ee.Image.getMap() in a Promise for async/await ergonomics
-function getEeMapInfo(image, visParams) {
-  return new Promise((resolve, reject) => {
-    // image.getMap(visParams, onSuccess, onError)
-    image.getMap(
-      visParams,
-      (mapInfo) => resolve(mapInfo),
-      (err) => reject(err)
-    );
-  });
-}
 
 export default function EEMap() {
   const mapElRef = useRef(null);
