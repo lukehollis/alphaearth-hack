@@ -1,4 +1,4 @@
-/* global ee */
+/* global ee, gapi */
 
 "use client";
 
@@ -15,6 +15,23 @@ function loadScript(src) {
     s.onload = () => resolve();
     s.onerror = (e) => reject(new Error(`Failed to load script ${src}`));
     document.head.appendChild(s);
+  });
+}
+
+function waitForGlobal(name, timeout = 20000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    (function check() {
+      if (typeof window !== "undefined" && window[name]) {
+        resolve(window[name]);
+        return;
+      }
+      if (Date.now() - start > timeout) {
+        reject(new Error(`Global ${name} did not load in time`));
+        return;
+      }
+      setTimeout(check, 100);
+    })();
   });
 }
 
@@ -68,10 +85,9 @@ export default function EEMap() {
         const poiLatLng = [39.0372, -121.8036]; // [lat, lng]
         map.setView(poiLatLng, 12);
 
-        // Load Earth Engine JS API
-        // Order matters: gapi first, then ee_api_js
-        await loadScript("https://apis.google.com/js/api.js");
-        await loadScript("https://www.gstatic.com/earthengine/ee_api_js.js");
+        // Wait for Earth Engine and Google API scripts injected via Next.js
+        await waitForGlobal("gapi");
+        await waitForGlobal("ee");
 
         // Authenticate & initialize Earth Engine
         const clientId = process.env.NEXT_PUBLIC_EE_CLIENT_ID;
