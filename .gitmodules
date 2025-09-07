@@ -1,0 +1,3 @@
+[submodule "earthengine-catalog"]
+	path = earthengine-catalog
+	url = https://github.com/google/earthengine-catalog.git
