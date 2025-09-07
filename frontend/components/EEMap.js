@@ -28,7 +28,8 @@ export default function EEMap() {
   const firstConnectTimerRef = useRef(null);
 
   // Backend endpoints
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+  // Use same-origin Next.js proxy route to avoid CORS for API calls.
+  const apiBase = "";
   const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/chat";
 
   useEffect(() => {
