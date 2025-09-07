@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { MathJax, MathJaxContext } from "better-react-mathjax";
 
 export default function EEMap() {
   const mapElRef = useRef(null);
@@ -19,6 +20,25 @@ export default function EEMap() {
   const [latex, setLatex] = useState("");
   const [latexLoading, setLatexLoading] = useState(false);
   const [latexError, setLatexError] = useState("");
+
+  // MathJax v3 config for TeX + AMS environments
+  const mathJaxConfig = {
+    loader: { load: ["[tex]/ams"] },
+    tex: {
+      packages: { "[+]": ["ams"] },
+      inlineMath: [
+        ["$", "$"],
+        ["\\(", "\\)"],
+      ],
+      displayMath: [
+        ["$$", "$$"],
+        ["\\[", "\\]"],
+      ],
+      macros: {
+        captionof: ["\\text{#2}", 2],
+      },
+    },
+  };
 
   // Example configurations
   const examples = [
@@ -42,6 +62,13 @@ export default function EEMap() {
       location: [42.352, -71.052], // Boston Seaport, MA
       zoom: 15,
       bounds: [[42.34, -71.06], [42.36, -71.04]],
+    },
+    {
+      name: "Arctic Permafrost Counterfactual (Northern Alaska) 🧊",
+      policy: "Counterfactual quasi-experiment on Arctic permafrost in Northern Alaska",
+      location: [71.29, -156.79], // Utqiagvik (Barrow), AK
+      zoom: 10,
+      bounds: [[71.20, -157.10], [71.36, -156.50]],
     },
   ];
 
@@ -614,7 +641,8 @@ export default function EEMap() {
   }
 
   return (
-    <div style={{ height: "100vh", width: "100%", position: "relative" }}>
+    <MathJaxContext config={mathJaxConfig}>
+      <div style={{ height: "100vh", width: "100%", position: "relative" }}>
       {/* Error overlay */}
       {error ? (
         <div
@@ -809,22 +837,21 @@ export default function EEMap() {
                 <div style={{ marginTop: 6, color: "#b00", fontSize: 12 }}>Error: {latexError}</div>
               ) : null}
               {latex ? (
-                <pre
+                <div
                   style={{
                     marginTop: 8,
-                    whiteSpace: "pre-wrap",
-                    background: "#f7f7f7",
+                    background: "#fff",
                     border: "1px solid #ddd",
                     borderRadius: 4,
-                    padding: 8,
-                    fontSize: 11,
-                    color: "#222",
-                    maxHeight: 200,
+                    padding: 12,
+                    fontSize: 13,
+                    color: "#111",
+                    maxHeight: 260,
                     overflowY: "auto",
                   }}
                 >
-{latex}
-                </pre>
+                  <MathJax dynamic={true}>{latex}</MathJax>
+                </div>
               ) : null}
             </div>
           </div>
@@ -934,7 +961,8 @@ export default function EEMap() {
 
       {/* Map container */}
       <div ref={mapElRef} style={{ height: "100%", width: "100%" }} />
-    </div>
+      </div>
+    </MathJaxContext>
   );
 }
 
