@@ -10,8 +10,8 @@ from .ee_climate import _annual_mean_era5_land_temperature, _annual_mean_modis_l
 
 
 def _all_alphaearth_bands() -> List[str]:
-    # AlphaEarth 64-D embedding bands are named A01..A64
-    return [f"A{str(i).zfill(2)}" for i in range(1, 65)]
+    # AlphaEarth 64-D embedding bands are named A00..A63 in the GEE dataset
+    return [f"A{str(i).zfill(2)}" for i in range(0, 64)]
 
 
 def _bands_list(bands: Sequence[str] | None) -> List[str]:
@@ -92,12 +92,18 @@ def alphaearth_learned_tile_template(
     used_bands = _bands_list(bands)
     if len(used_bands) == 0:
         raise ValueError("No AlphaEarth bands specified for regression.")
+    # Validate requested bands to match AlphaEarth dataset (A00..A63)
+    valid_bands = set(_all_alphaearth_bands())
+    invalid = [b for b in used_bands if b not in valid_bands]
+    if invalid:
+        raise ValueError(f"Invalid AlphaEarth band(s) requested: {invalid}. Valid bands are A00..A63.")
 
     # AOI
     geom = ee.Geometry(geometry) if geometry else None
 
     # Fetch inputs
-    ae_img = alphaearth_image_for_year(int(year), geometry if geometry else None).select(used_bands)
+    # Use global AlphaEarth predictors so the prediction covers the entire map (do NOT restrict by geometry).
+    ae_img = alphaearth_image_for_year(int(year)).select(used_bands)
     tgt_img, tgt_band, is_celsius = _target_image_for_year(target, int(year))
 
     # Build array image: predictors as an array band of length p; dependent as array len 1

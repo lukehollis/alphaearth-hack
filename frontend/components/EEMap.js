@@ -711,7 +711,7 @@ export default function EEMap() {
       } catch {}
       const layer = L.tileLayer(template, {
         attribution: "AlphaEarth→Soil Temp (learned) via Google Earth Engine",
-        opacity: 0.95,
+        opacity: 1.0,
       });
       try { layer.on("tileerror", () => {}); } catch {}
       learnedLayerRef.current = layer;
