@@ -18,6 +18,37 @@ export default function EEMap() {
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
 
+  // Example configurations
+  const examples = [
+    {
+      name: "Falmouth Coastal Watershed Protection 🌊",
+      policy: "Falmouth Coastal Watershed Protection District",
+      location: [41.55, -70.61], // Falmouth, MA
+      zoom: 12,
+    },
+    {
+      name: "Cambridge Climate Resilience Fee 🏗️",
+      policy: "Cambridge Climate Resilience Fee",
+      location: [42.37, -71.11], // Cambridge/Somerville border, MA
+      zoom: 13,
+    },
+    {
+      name: "Boston Urban Carbon Sink Initiative 🌳",
+      policy: "Boston Urban Carbon Sink Zone",
+      location: [42.352, -71.052], // Boston Seaport, MA
+      zoom: 15,
+    },
+  ];
+
+  function runExample(example) {
+    setPolicy(example.policy);
+    if (mapRef.current) {
+      mapRef.current.setView(example.location, example.zoom);
+    }
+    // Clear any existing drawn geometry so user can draw anew
+    setSelectedGeom(null);
+  }
+
   // Chat state
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -94,6 +125,7 @@ export default function EEMap() {
         drawnItems.addTo(map);
 
         const drawControl = new L.Control.Draw({
+          position: 'topleft',
           draw: {
             polygon: true,
             rectangle: true,
@@ -249,7 +281,7 @@ export default function EEMap() {
                 "Esri World Imagery": baseLayer,
               },
               overlays,
-              { collapsed: false }
+              { collapsed: false, position: 'topright' }
             )
             .addTo(map);
         }
@@ -579,6 +611,35 @@ export default function EEMap() {
             >
               {analyzing ? "Analyzing…" : "Analyze"}
             </button>
+          </div>
+        </div>
+
+        {/* Example buttons */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: "#333", marginBottom: 4 }}>Run Examples:</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {examples.map((example, idx) => (
+              <button
+                key={idx}
+                onClick={() => runExample(example)}
+                style={{
+                  fontSize: 12,
+                  padding: "4px 8px",
+                  border: "1px solid #069",
+                  background: "#eff",
+                  color: "#036",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+                title={example.name}
+              >
+                {example.name}
+              </button>
+            ))}
           </div>
         </div>
 
