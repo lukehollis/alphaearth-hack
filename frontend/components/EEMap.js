@@ -64,7 +64,7 @@ export default function EEMap() {
       bounds: [[42.34, -71.06], [42.36, -71.04]],
     },
     {
-      name: "Arctic Permafrost Counterfactual (Northern Alaska) 🧊",
+      name: "Data Center Energy Usage effects on Arctic Permafrost Counterfactual (Northern Alaska) 🧊",
       policy: "Counterfactual quasi-experiment on Arctic permafrost in Northern Alaska",
       location: [71.29, -156.79], // Utqiagvik (Barrow), AK
       zoom: 10,
