@@ -848,9 +848,12 @@ export default function EEMap() {
           boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
         }}
       >
-        <div style={{ fontWeight: 600, marginBottom: 8, color: "#222", position: "sticky", top: "0", background: "rgba(255, 255, 255, 0.9)", padding: "12px" }}>Policy Proof</div>
-        <div style={{ fontSize: 12, color: "#333", marginBottom: 10 }}>
-          1) Draw a polygon/rectangle along a municipal border. 2) Enter an optional policy name and select year.
+        <div style={{ fontWeight: 600, marginBottom: 8, color: "#222", position: "sticky", top: "0", background: "rgba(255, 255, 255, 0.9)", padding: "12px 8px 4px" }}>Policy Proof</div>
+        <div style={{ fontSize: 12, color: "#333", marginBottom: 10, padding: "0px 8px", }}>
+          1) Draw a polygon/rectangle along a municipal border. 
+          <br></br>
+          2) Enter an optional policy name and select year.
+          <br></br>
           3) Click Analyze to run SRD analysis using AlphaEarth satellite data (or fallback to simulated data).
         </div>
         <div style={{ marginBottom: 6 }}>
@@ -866,10 +869,11 @@ export default function EEMap() {
               border: "1px solid #ccc",
               borderRadius: 4,
               marginBottom: 6,
+              margin: "4px 6px",
               resize: "vertical",
             }}
           />
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: '0px 8px', }}>
             <select
               value={year}
               onChange={(e) => setYear(parseInt(e.target.value))}
@@ -906,7 +910,7 @@ export default function EEMap() {
         </div>
 
         {/* Example buttons */}
-        <div style={{ marginBottom: 10 }}>
+        <div style={{ marginBottom: 10, padding: "0  8px", }}>
           <div style={{ fontSize: 12, color: "#333", marginBottom: 4 }}>Run Examples:</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {examples.map((example, idx) => (
@@ -936,7 +940,7 @@ export default function EEMap() {
 
         {/* Results */}
         {analysis ? (
-          <div>
+          <div style={{ padding: "0px 8px" }}>
             <div style={{ fontSize: 13, marginBottom: 6 }}>
               Impact Score:{" "}
               <span style={{ fontWeight: 600 }}>{analysis.impact_score}</span>
@@ -1009,7 +1013,7 @@ export default function EEMap() {
 
           </div>
         ) : (
-          <div style={{ fontSize: 12, color: "#666" }}>
+          <div style={{ fontSize: 12, color: "#666", padding: "0 8px 8px" }}>
             Draw a boundary and click Analyze to view the chart.
           </div>
         )}
