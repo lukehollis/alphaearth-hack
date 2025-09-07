@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Set
 from datetime import datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import logging
+import anyio
 logger = logging.getLogger("policy_proof.ws")
 
 from .services.analyze import run_real_srd_analysis, run_mock_srd_analysis
@@ -56,7 +57,7 @@ class AnalyzeRequest(BaseModel):
 
 class AnalysisPoint(BaseModel):
     distance_km: float
-    value: float
+    value: Optional[float] = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -104,15 +105,27 @@ from fastapi.responses import StreamingResponse
 @app.post("/api/analyze")
 def analyze(req: AnalyzeRequest) -> StreamingResponse:
     geom = req.geojson_geometry()
-    year = req.year if req.year is not None else (datetime.utcnow().year - 1)
+    year = req.year if req.year is not None else (datetime.utcnow().year - 2)
 
     def generate():
+        def _broadcast(text: str) -> None:
+            try:
+                anyio.from_thread.run(ws_manager.broadcast_json, {"type": "message", "from": "analysis", "message": text})
+            except Exception:
+                # best-effort
+                pass
         try:
             gen = run_real_srd_analysis(geom, year)
             print(f"Using real AlphaEarth analysis for year {year}")
+            _broadcast(f"Starting SRD analysis for year {year} using real AlphaEarth data.")
         except Exception as e:
             print(f"Earth Engine analysis failed ({e}), falling back to mock data")
+            _broadcast(f"Earth Engine analysis failed ({e}); falling back to mock data.")
             result = run_mock_srd_analysis(geom)
+            try:
+                _broadcast(f"Mock analysis complete. Impact Score: {result.get('impact_score', 0):.3f} ({len(result.get('points', []))} points).")
+            except Exception:
+                pass
             yield json.dumps(AnalyzeResponse(policy=req.policy, **result).dict()) + "\n"
             return
 
@@ -123,11 +136,29 @@ def analyze(req: AnalyzeRequest) -> StreamingResponse:
         for item in gen:
             if "bins" in item:
                 bins = item["bins"]
+                try:
+                    if isinstance(bins, list) and bins:
+                        _broadcast(f"Initialized {len(bins)} bins from {bins[0]:+.2f}km to {bins[-1]:+.2f}km.")
+                    else:
+                        _broadcast("Initialized analysis bins.")
+                except Exception:
+                    pass
             elif "point" in item:
                 points.append(item["point"])
+                try:
+                    pt = item["point"]
+                    val = pt.get("value")
+                    val_str = "N/A" if val is None else f"{val:.2f}"
+                    _broadcast(f"Year {year} | Dist {pt.get('distance_km', 0):+.2f}km | Value {val_str}")
+                except Exception:
+                    pass
                 yield json.dumps(item) + "\n"
             elif "impact_score" in item:
                 impact_score = item["impact_score"]
+                try:
+                    _broadcast(f"Impact Score: {float(impact_score):.3f}")
+                except Exception:
+                    pass
 
         if bins is not None and impact_score is not None:
             final = AnalyzeResponse(
@@ -137,6 +168,10 @@ def analyze(req: AnalyzeRequest) -> StreamingResponse:
                 bins=bins
             ).dict()
             yield json.dumps(final) + "\n"
+            try:
+                _broadcast("Analysis complete.")
+            except Exception:
+                pass
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
@@ -167,12 +202,44 @@ def ee_alphaearth_tiles(
     )
 
 
+# WebSocket connection manager for broadcasting analysis updates to all connected chat clients
+class ConnectionManager:
+    def __init__(self) -> None:
+        self.active: Set[WebSocket] = set()
+
+    async def connect(self, ws: WebSocket) -> None:
+        self.active.add(ws)
+
+    def disconnect(self, ws: WebSocket) -> None:
+        try:
+            self.active.discard(ws)
+        except Exception:
+            pass
+
+    async def broadcast_json(self, obj: Any) -> None:
+        dead: list[WebSocket] = []
+        data = json.dumps(obj)
+        for client in list(self.active):
+            try:
+                await client.send_text(data)
+            except Exception:
+                dead.append(client)
+        for d in dead:
+            self.disconnect(d)
+
+ws_manager = ConnectionManager()
+
 @app.websocket("/ws/chat")
 async def chat_ws(ws: WebSocket):
     logger.info("WS: handshake start")
     print("WS: handshake start")
     # Accept WebSocket
     await ws.accept()
+    # Register connection for broadcast
+    try:
+        await ws_manager.connect(ws)
+    except Exception:
+        pass
     logger.info("WS: accepted connection")
     print("WS: accepted connection")
     system_prompt = (
@@ -291,11 +358,19 @@ async def chat_ws(ws: WebSocket):
     except WebSocketDisconnect:
         logger.info("WS: client disconnected")
         print("WS: client disconnected")
+        try:
+            ws_manager.disconnect(ws)
+        except Exception:
+            pass
         return
     except Exception as e:
         logger.exception("WS: server error")
         print(f"WS: server error: {e}")
         await send_json({"type": "error", "message": f"Server error: {e}"})
+        try:
+            ws_manager.disconnect(ws)
+        except Exception:
+            pass
 
 
 # Simple echo WebSocket for connectivity testing

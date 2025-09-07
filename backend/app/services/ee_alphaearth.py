@@ -17,11 +17,14 @@ def _ee_project() -> str | None:
 def _ensure_initialized() -> None:
     global _INITIALIZED
     if _INITIALIZED:
+        print("EE already initialized")
         return
     project = _ee_project()
+    print(f"Initializing EE with project: {project}")
     try:
         # Check for service account credentials
         credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        print(f"Credentials path: {credentials_path}")
         if credentials_path and os.path.exists(credentials_path):
             # Use service account credentials explicitly
             import google.auth
@@ -31,9 +34,11 @@ def _ensure_initialized() -> None:
                 credentials_path, scopes=['https://www.googleapis.com/auth/earthengine']
             )
             ee.Initialize(credentials=credentials, project=project)
+            print("Initialized with service account")
         else:
             # Fall back to ADC (includes stored OAuth from 'earthengine authenticate')
             ee.Initialize(project=project)
+            print("Initialized with ADC")
     except Exception as e:
         # Provide a clear guidance error message.
         raise RuntimeError(
@@ -51,13 +56,25 @@ def _to_bands_list(bands: Sequence[str] | None) -> List[str]:
     return [str(b).strip() for b in bands if str(b).strip()]
 
 
-def alphaearth_image_for_year(year: int) -> ee.Image:
+def alphaearth_image_for_year(year: int, geometry: Dict[str, Any] | None = None) -> ee.Image:
     """Returns the AlphaEarth Satellite Embedding image for the calendar year."""
     _ensure_initialized()
     start = f"{int(year)}-01-01"
     end = f"{int(year) + 1}-01-01"
+    print(f"Fetching image for year {year}, date range: {start} to {end}")
     col = ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
-    img = col.filterDate(start, end).first()
+    print(f"Collection size: {col.size().getInfo()}")
+    col = col.filterDate(start, end)
+    if geometry is not None:
+        col = col.filterBounds(ee.Geometry(geometry))
+    print(f"Collection size: {col.size().getInfo()}")
+    size = col.size().getInfo()
+    if size == 0:
+        raise ValueError(f"No AlphaEarth image available for year {year} covering the geometry")
+    img = col.mosaic()
+    if img is None:
+        raise ValueError(f"No AlphaEarth image available for year {year}")
+    print(f"Fetched image ID: {img.id().getInfo()}")
     return ee.Image(img)
 
 

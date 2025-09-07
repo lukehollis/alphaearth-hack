@@ -15,6 +15,7 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
     Perform Spatial Regression Discontinuity analysis using real AlphaEarth satellite data.
     Yields points progressively, then the impact score at the end.
     """
+    print(f"Starting real SRD analysis for year {year} with geometry: {geometry}")
     _ensure_initialized()
 
     # Define analysis parameters
@@ -24,11 +25,14 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
     yield {"bins": bin_edges[:-1]}  # Bin starts
 
     # Get AlphaEarth image for the year
-    img = alphaearth_image_for_year(year)
+    img = alphaearth_image_for_year(year, geometry)
+    print(f"Selected image info: {img.getInfo()}")
 
     # Aggregate bands into activity metric
     bands = ["A01", "A16", "A09"]
+    print(f"Selecting bands: {bands}")
     activity_img = img.select(bands).reduce(ee.Reducer.mean())
+    print(f"Activity image info: {activity_img.getInfo()}")
 
     points = []
     for i in range(len(bin_edges) - 1):
@@ -50,6 +54,8 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
             outer = ee.Feature(geometry).buffer(-outer_dist, 50).geometry()
             band_geom = outer.difference(inner)
 
+        print(f"Sampling for dist {mid}km with geometry: {band_geom.getInfo()}")
+
         # Sample
         samples = activity_img.reduceRegion(
             reducer=ee.Reducer.mean().combine(ee.Reducer.count(), '', True),
@@ -58,16 +64,25 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
             maxPixels=1e9,
             bestEffort=True
         ).getInfo()
+        print(f"Raw samples: {samples}")
 
         try:
-            raw_value = samples['mean']
-            count = samples['count']
-            if count == 0 or raw_value is None:
+            # Handle both possible key layouts from Earth Engine reducers:
+            # - If the image band is named 'mean', a combined reducer yields 'mean_mean' and 'mean_count'
+            # - Otherwise it may yield plain 'mean' and 'count'
+            raw_value = samples.get("mean")
+            count = samples.get("count")
+            if raw_value is None or count is None:
+                raw_value = samples.get("mean_mean")
+                count = samples.get("mean_count")
+            print(f"Raw mean: {raw_value}, Count: {count}")
+            if not count or raw_value is None:
                 value = None
             else:
-                normalized_value = (raw_value + 0.3) / 0.6
+                normalized_value = (float(raw_value) + 0.3) / 0.6
                 value = round(normalized_value * 100, 2)
-        except (KeyError, TypeError):
+        except Exception as e:
+            print(f"Error processing samples: {e}")
             value = None
 
         print(f"Year {year} | Dist {mid}km | Value {value} | Count {samples.get('count', 'N/A')}")
@@ -78,17 +93,19 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
 
     # Calculate impact_score
     valid_points = [p for p in points if p["value"] is not None]
+    print(f"Number of valid points: {len(valid_points)}")
     if len(valid_points) < 4:
-        impact_est = 0.0
+        raise ValueError("Insufficient valid data points for SRD analysis")
+    near_inside = [p["value"] for p in valid_points if 0.0 <= p["distance_km"] <= 0.5]
+    near_outside = [p["value"] for p in valid_points if -0.5 <= p["distance_km"] < 0.0]
+    print(f"Near inside values: {near_inside}")
+    print(f"Near outside values: {near_outside}")
+    if near_inside and near_outside:
+        inside_mean = sum(near_inside) / len(near_inside)
+        outside_mean = sum(near_outside) / len(near_outside)
+        impact_est = inside_mean - outside_mean
     else:
-        near_inside = [p["value"] for p in valid_points if 0.0 <= p["distance_km"] <= 0.5]
-        near_outside = [p["value"] for p in valid_points if -0.5 <= p["distance_km"] < 0.0]
-        if near_inside and near_outside:
-            inside_mean = sum(near_inside) / len(near_inside)
-            outside_mean = sum(near_outside) / len(near_outside)
-            impact_est = inside_mean - outside_mean
-        else:
-            impact_est = 0.0
+        impact_est = 0.0
 
     yield {"impact_score": float(round(impact_est, 3))}
 

@@ -533,11 +533,36 @@ export default function EEMap() {
         const txt = await res.text();
         throw new Error(`Analyze failed: ${res.status} ${txt}`);
       }
-      const data = await res.json();
+      const txt = await res.text();
+      let parsed;
+      try {
+        // Try single JSON first
+        parsed = JSON.parse(txt);
+      } catch {
+        // Fallback: NDJSON (newline-delimited JSON). Parse last valid object,
+        // preferring the summary with impact_score/bins/points if present.
+        const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        let finalObj = null;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const obj = JSON.parse(lines[i]);
+            finalObj = obj;
+            if (obj && obj.impact_score != null && obj.points && obj.bins) {
+              break;
+            }
+          } catch {
+            // ignore parse errors on individual lines
+          }
+        }
+        if (!finalObj) {
+          throw new Error("Analyze returned no parseable JSON.");
+        }
+        parsed = finalObj;
+      }
       // Add metadata about data type used
       setAnalysis({
-        ...data,
-        dataType: data.impact_score !== 0 ? "real" : "mock", // Simple heuristic - real data should show vary
+        ...parsed,
+        dataType: parsed.impact_score !== 0 ? "real" : "mock", // Simple heuristic - real data should show vary
         selectedYear: year
       });
     } catch (e) {
