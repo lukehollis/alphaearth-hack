@@ -5,7 +5,7 @@ import os
 from typing import Any, List, Optional, Set
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -334,7 +334,7 @@ def ee_alphaearth_learn_tiles(
     req: AlphaEarthLearnedTilesRequest,
     target: Optional[str] = Query(default="t2m", description="t2m or lst_day"),
     year: Optional[int] = None,
-    bands: Optional[str] = Query(default=None, description="Comma-separated bands like A01,A16,A09; default is all A01..A64"),
+    bands: Optional[str] = Query(default=None, description="Comma-separated bands like A01,A16,A09; default is all A00..A63"),
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     scale: Optional[int] = Query(default=1000, description="Regression sample scale in meters (default 1000)"),
@@ -345,21 +345,25 @@ def ee_alphaearth_learn_tiles(
 
     - target: "t2m" (ERA5-Land 2m air temperature, °C) or "lst_day" (MODIS daytime LST, °C)
     - year: calendar year to align AlphaEarth embeddings and target
-    - bands: optional subset of AlphaEarth bands (e.g., A01,A16,A09); defaults to all A01..A64
+    - bands: optional subset of AlphaEarth bands (e.g., A01,A16,A09); defaults to all A00..A63
     - vmin/vmax: visualization range (°C)
     - scale: sampling scale for regression fit (meters)
     """
     y = year if year is not None else (datetime.utcnow().year - 1)
     bands_list = [b.strip() for b in bands.split(",")] if bands else None
-    template, used_bands, mn, mx = alphaearth_learned_tile_template(
-        year=y,
-        geometry=(req.geometry or None),
-        target=(target or "t2m"),
-        bands=bands_list,
-        scale=scale or 1000,
-        vmin=vmin,
-        vmax=vmax,
-    )
+    try:
+        template, used_bands, mn, mx = alphaearth_learned_tile_template(
+            year=y,
+            geometry=(req.geometry or None),
+            target=(target or "t2m"),
+            bands=bands_list,
+            scale=scale or 1000,
+            vmin=vmin,
+            vmax=vmax,
+        )
+    except ValueError as e:
+        # Return a clear 400 for invalid band requests or other client errors
+        raise HTTPException(status_code=400, detail=str(e))
     return AlphaEarthLearnedTilesResponse(
         year=int(y),
         target=str(target or "t2m"),
