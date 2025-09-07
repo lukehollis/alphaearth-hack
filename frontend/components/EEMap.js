@@ -1,4 +1,4 @@
-/* global ee, gapi */
+/* Client-side map; Earth Engine removed */
 
 "use client";
 
@@ -197,110 +197,62 @@ export default function EEMap() {
           setSelectedGeom(null);
         });
 
-        // Ensure gapi and ee are loaded. Try proxies/upstreams and wait in order.
-        await ensureGlobal("gapi", ["/api/proxy-gapi", "https://apis.google.com/js/api.js"], 15000);
-        // Load gapi client/auth2 modules to satisfy ee oauth internals
-        await new Promise((resolve, reject) => {
-          try {
-            gapi.load("client:auth2", {
-              callback: resolve,
-              onerror: () => reject(new Error("gapi.load(client:auth2) failed")),
-            });
-          } catch (err) {
-            reject(err);
-          }
-        });
-        await ensureGlobal("ee", ["https://www.gstatic.com/earthengine/ee_api_js.js"], 20000);
+        // AlphaEarth: use your own XYZ tile sources instead of Earth Engine.
+        // Configure one of:
+        //  - NEXT_PUBLIC_ALPHAEARTH_TILE_TEMPLATE, e.g. http://localhost:8080/alphaearth/{year}/{z}/{x}/{y}.png
+        //  - or explicit NEXT_PUBLIC_ALPHAEARTH_LATEST_URL and NEXT_PUBLIC_ALPHAEARTH_PREVIOUS_URL
+        const alphaTemplate = process.env.NEXT_PUBLIC_ALPHAEARTH_TILE_TEMPLATE;
+        const alphaLatestUrlEnv = process.env.NEXT_PUBLIC_ALPHAEARTH_LATEST_URL;
+        const alphaPrevUrlEnv = process.env.NEXT_PUBLIC_ALPHAEARTH_PREVIOUS_URL;
 
-        // Authenticate & initialize Earth Engine
-        const clientId = process.env.NEXT_PUBLIC_EE_CLIENT_ID;
-        if (!clientId) {
-          throw new Error(
-            "Missing NEXT_PUBLIC_EE_CLIENT_ID. Create .env.local and set your Web OAuth Client ID."
-          );
+        const yearNow = new Date().getUTCFullYear();
+        const latestYear = yearNow - 1; // assume last fully-available year
+        const prevYear = latestYear - 1;
+
+        function resolveUrl(urlOrTemplate, year) {
+          if (!urlOrTemplate) return null;
+          if (urlOrTemplate.includes("{year}")) {
+            return urlOrTemplate.replaceAll("{year}", String(year));
+          }
+          return urlOrTemplate;
         }
 
-        await new Promise((resolve, reject) => {
-          // Implicit OAuth flow in-popup
-          // If you want to force re-auth each time during dev, pass true as 5th arg.
-          ee.data.authenticateViaOauth(
-            clientId,
-            () => {
-              ee.initialize(null, null, resolve, reject);
-            },
-            (e) => reject(e),
-            null,
-            // opt_force_reauth
-            false
+        const urlLatest = resolveUrl(alphaLatestUrlEnv || alphaTemplate, latestYear);
+        const urlPrev = resolveUrl(alphaPrevUrlEnv || alphaTemplate, prevYear);
+
+        if (!urlLatest && !urlPrev) {
+          setError(
+            "No AlphaEarth tile URL configured. Set NEXT_PUBLIC_ALPHAEARTH_TILE_TEMPLATE (with {year}) or NEXT_PUBLIC_ALPHAEARTH_LATEST_URL / NEXT_PUBLIC_ALPHAEARTH_PREVIOUS_URL in .env.local."
           );
-        });
+        } else {
+          const overlays = {};
+          if (urlLatest) {
+            overlays[`AlphaEarth ${latestYear}`] = L.tileLayer(urlLatest, {
+              attribution: "AlphaEarth",
+              opacity: 0.8,
+            });
+          }
+          if (urlPrev) {
+            overlays[`AlphaEarth ${prevYear}`] = L.tileLayer(urlPrev, {
+              attribution: "AlphaEarth",
+              opacity: 0.8,
+            });
+          }
 
-        // Replicate the user's EE script logic
-        const dataset = ee.ImageCollection(
-          "GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL"
-        );
+          // Add any created layers to the map
+          Object.values(overlays).forEach((layer) => layer.addTo(map));
 
-        const point = ee.Geometry.Point([-121.8036, 39.0372]);
-
-        // Sort by time descending and take latest 2 images covering the point
-        const col = dataset.filterBounds(point).sort("system:time_start", false);
-        const list2 = col.toList(2);
-        const latest = ee.Image(list2.get(0));
-        const previous = ee.Image(list2.get(1));
-
-        // Visualize three axes of the embedding space as an RGB
-        const rgbVis = { min: -0.3, max: 0.3, bands: ["A01", "A16", "A09"] };
-
-        // Compute dot product similarity
-        const dotProd = latest.multiply(previous).reduce(ee.Reducer.sum());
-
-        // Create EE tile layers for Leaflet
-        const mLatest = await getEeMapInfo(latest, rgbVis);
-        const mPrev = await getEeMapInfo(previous, rgbVis);
-        const mDot = await getEeMapInfo(dotProd, {
-          min: 0,
-          max: 1,
-          palette: ["white", "black"],
-        });
-
-        const urlLatest = `https://earthengine.googleapis.com/map/${mLatest.mapid}/{z}/{x}/{y}?token=${mLatest.token}`;
-        const urlPrev = `https://earthengine.googleapis.com/map/${mPrev.mapid}/{z}/{x}/{y}?token=${mPrev.token}`;
-        const urlDot = `https://earthengine.googleapis.com/map/${mDot.mapid}/{z}/{x}/{y}?token=${mDot.token}`;
-
-        const layerLatest = L.tileLayer(urlLatest, {
-          attribution: "Google Earth Engine",
-          opacity: 0.8,
-        });
-
-        const layerPrev = L.tileLayer(urlPrev, {
-          attribution: "Google Earth Engine",
-          opacity: 0.8,
-        });
-
-        const layerSimilarity = L.tileLayer(urlDot, {
-          attribution: "Google Earth Engine",
-          opacity: 0.6,
-        });
-
-        // Add layers to map
-        layerLatest.addTo(map);
-        layerPrev.addTo(map);
-        layerSimilarity.addTo(map);
-
-        // Layer controls
-        L.control
-          .layers(
-            {
-              "Esri World Imagery": baseLayer,
-            },
-            {
-              "AlphaEarth latest": layerLatest,
-              "AlphaEarth previous": layerPrev,
-              "Similarity (brighter = less similar)": layerSimilarity,
-            },
-            { collapsed: false }
-          )
-          .addTo(map);
+          // Layer controls
+          L.control
+            .layers(
+              {
+                "Esri World Imagery": baseLayer,
+              },
+              overlays,
+              { collapsed: false }
+            )
+            .addTo(map);
+        }
       } catch (e) {
         console.error(e);
         setError(e?.message || String(e));
