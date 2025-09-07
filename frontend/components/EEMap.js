@@ -104,10 +104,8 @@ export default function EEMap() {
         if (typeof window !== "undefined") {
           window.L = L;
         }
-        // Load Leaflet.Draw plugin JS via CDN
-        await loadScript(
-          "https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"
-        );
+        // Load Leaflet.Draw plugin via package (requires window.L set)
+        await import("leaflet-draw");
 
         // Initialize Leaflet map
         if (!mapElRef.current) return;
@@ -436,7 +434,7 @@ export default function EEMap() {
           position: "absolute",
           zIndex: 999,
           top: 12,
-          left: 12,
+          left: 52,
           width: 360,
           background: "rgba(255,255,255,0.95)",
           border: "1px solid #ddd",
@@ -445,7 +443,7 @@ export default function EEMap() {
           boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
         }}
       >
-        <div style={{ fontWeight: 600, marginBottom: 8 }}>Policy Proof</div>
+        <div style={{ fontWeight: 600, marginBottom: 8, color: "#222" }}>Policy Proof</div>
         <div style={{ fontSize: 12, color: "#333", marginBottom: 10 }}>
           1) Draw a polygon/rectangle along a municipal border. 2) Enter an optional policy name.
           3) Click Analyze to run the mock SRD and see the discontinuity plot.
@@ -516,6 +514,7 @@ export default function EEMap() {
           display: "flex",
           flexDirection: "column",
           maxHeight: "55vh",
+          color: "#222",
         }}
       >
         <div
@@ -523,6 +522,7 @@ export default function EEMap() {
             padding: "8px 10px",
             borderBottom: "1px solid #eee",
             fontWeight: 600,
+            color: "#222",
           }}
         >
           Chat

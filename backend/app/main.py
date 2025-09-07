@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .services.analyze import run_mock_srd_analysis
+from .services.llm import stream_text, stream_ollama, stream_sambanova, stream_text_anakin
 
 
 class AnalyzeRequest(BaseModel):
@@ -80,12 +81,13 @@ def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
 
 @app.websocket("/ws/chat")
 async def chat_ws(ws: WebSocket):
-    # Accept WebSocket with optional origin check (already covered by CORS for HTTP)
+    # Accept WebSocket
     await ws.accept()
     system_prompt = (
         "You are Policy Proof assistant. Help users evaluate climate policy impact using "
         "Spatial Regression Discontinuity (SRD). Keep responses concise and actionable."
     )
+    # Conversation memory in OpenAI-style messages
     history: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
     async def send_json(obj: Any) -> None:
@@ -96,6 +98,13 @@ async def chat_ws(ws: WebSocket):
             pass
 
     await send_json({"type": "info", "message": "Connected to Policy Proof chat."})
+
+    # Provider selection via env
+    provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+    use_ollama = provider == "ollama" or os.getenv("USE_OLLAMA", "").lower() in ("1", "true", "yes")
+    use_anakin = provider == "anakin" or os.getenv("USE_ANAKIN", "").lower() in ("1", "true", "yes")
+    use_sambanova = provider == "sambanova"
+
     try:
         while True:
             raw = await ws.receive_text()
@@ -109,25 +118,49 @@ async def chat_ws(ws: WebSocket):
                 await send_json({"type": "error", "message": "Invalid message payload."})
                 continue
 
-            # Append to history
+            # Append user message
             history.append({"role": "user", "content": msg})
 
-            # Very lightweight rule-based response for MVP
-            reply = None
-            low = msg.lower()
-            if "boundary" in low or "polygon" in low:
-                reply = "Draw a boundary on the map and click Analyze to run the SRD mock analysis."
-            elif "analyz" in low or "impact" in low:
-                reply = "Use the Analyze button after selecting a boundary. The chart will show any discontinuity at the border."
-            elif "earth engine" in low or "gee" in low:
-                reply = "The map displays Google Earth Engine tiles. You can compare embeddings and similarity layers."
-            else:
-                reply = "I can help you evaluate policy impact near borders using SRD. What policy or area are you interested in?"
+            # Route to selected LLM stream and aggregate into a single assistant message
+            reply_text = ""
 
-            history.append({"role": "assistant", "content": reply})
-            await send_json({"type": "message", "from": "assistant", "message": reply})
+            try:
+                if use_ollama:
+                    agen = stream_ollama(prompt="", messages=history, system_prompt=system_prompt)
+                elif use_sambanova:
+                    agen = stream_sambanova(prompt="", messages=history, system_prompt=system_prompt)
+                elif use_anakin:
+                    agen = stream_text_anakin(prompt="", messages=history, system_prompt=system_prompt, app_id=os.getenv("ANAKIN_APP_ID"))
+                else:
+                    agen = stream_text(prompt="", messages=history, system_prompt=system_prompt, include_reasoning=False)
+
+                async for chunk in agen:
+                    try:
+                        # OpenAI-style streaming delta
+                        if getattr(chunk, "choices", None):
+                            delta_obj = getattr(chunk.choices[0], "delta", None)
+                            if delta_obj is not None:
+                                delta = getattr(delta_obj, "content", None)
+                                if delta:
+                                    reply_text += delta
+                    except Exception:
+                        # ignore malformed chunk
+                        pass
+            except Exception as e:
+                await send_json({"type": "error", "message": f"LLM error: {e}"})
+                # Roll back last user message if no assistant reply
+                continue
+
+            reply_text = reply_text.strip()
+            if not reply_text:
+                await send_json({"type": "error", "message": "No response generated from the model."})
+                continue
+
+            # Append assistant message to history and send to client
+            history.append({"role": "assistant", "content": reply_text})
+            await send_json({"type": "message", "from": "assistant", "message": reply_text})
+
     except WebSocketDisconnect:
-        # Client disconnected
         return
     except Exception as e:
         await send_json({"type": "error", "message": f"Server error: {e}"})
