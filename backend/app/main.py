@@ -26,19 +26,32 @@ class AnalyzeRequest(BaseModel):
     year: Optional[int] = None  # Year for AlphaEarth analysis, defaults to latest available
 
     def geojson_geometry(self) -> dict[str, Any]:
+        g = None
         if self.geometry:
-            return self.geometry
-        if self.feature and isinstance(self.feature, dict):
-            geom = self.feature.get("geometry")
-            if geom:
-                return geom
-        if self.feature_collection and isinstance(self.feature_collection, dict):
+            g = self.geometry
+        elif self.feature and isinstance(self.feature, dict):
+            g = self.feature.get("geometry")
+        elif self.feature_collection and isinstance(self.feature_collection, dict):
             feats = self.feature_collection.get("features") or []
             if feats and isinstance(feats[0], dict):
-                geom = feats[0].get("geometry")
-                if geom:
-                    return geom
-        raise ValueError("No valid GeoJSON geometry provided. Send { geometry } or { feature } or { featureCollection }.")
+                g = feats[0].get("geometry")
+
+        if not g or not isinstance(g, dict):
+            raise ValueError(
+                "No valid GeoJSON geometry provided. Send { geometry } or { feature } or { featureCollection }."
+            )
+
+        # If what we have is a Feature, extract its geometry.
+        if str(g.get("type")).lower() == "feature":
+            geom = g.get("geometry")
+            if geom and isinstance(geom, dict):
+                return geom
+            else:
+                # It's a feature without a valid geometry, so raise error
+                raise ValueError("Feature provided without a valid geometry.")
+
+        # Otherwise, assume it's a geometry and return it.
+        return g
 
 
 class AnalysisPoint(BaseModel):

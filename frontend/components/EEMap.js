@@ -3,10 +3,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-
-
-
+import ReactMarkdown from "react-markdown";
 
 export default function EEMap() {
   const mapElRef = useRef(null);
@@ -65,6 +62,7 @@ export default function EEMap() {
   const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/chat";
 
   useEffect(() => {
+    let mounted = true;
     let map;
     let baseLayer;
 
@@ -124,23 +122,32 @@ export default function EEMap() {
         const drawnItems = new L.FeatureGroup();
         drawnItems.addTo(map);
 
-        const drawControl = new L.Control.Draw({
-          position: 'topleft',
-          draw: {
-            polygon: true,
-            rectangle: true,
-            polyline: false,
-            circle: false,
-            marker: false,
-            circlemarker: false,
-          },
-          edit: {
-            featureGroup: drawnItems,
-            edit: true,
-            remove: true,
-          },
-        });
-        map.addControl(drawControl);
+        if (L.Control && L.Control.Draw) {
+          const drawControl = new L.Control.Draw({
+            position: 'topleft',
+            draw: {
+              polygon: true,
+              rectangle: true,
+              polyline: false,
+              circle: false,
+              marker: false,
+              circlemarker: false,
+            },
+            edit: {
+              featureGroup: drawnItems,
+              edit: true,
+              remove: true,
+            },
+          });
+          try {
+            map.addControl(drawControl);
+          } catch (e) {
+            console.error('Failed to add draw control:', e);
+            setError('Failed to initialize drawing tools.');
+          }
+        } else {
+          console.warn('Leaflet Draw plugin not available.');
+        }
 
         map.on(L.Draw.Event.CREATED, (e) => {
           try {
@@ -230,6 +237,7 @@ export default function EEMap() {
 
           try {
             const latestInfo = await fetchTemplateForYear(latestYear);
+            if (!mounted) return;
             if (latestInfo?.template) {
               overlays[`AlphaEarth ${latestInfo.year}`] = L.tileLayer(latestInfo.template, {
                 attribution: "AlphaEarth via Google Earth Engine",
@@ -247,6 +255,7 @@ export default function EEMap() {
 
           try {
             const prevInfo = await fetchTemplateForYear(prevYear);
+            if (!mounted) return;
             if (prevInfo?.template) {
               overlays[`AlphaEarth ${prevInfo.year}`] = L.tileLayer(prevInfo.template, {
                 attribution: "AlphaEarth via Google Earth Engine",
@@ -258,10 +267,22 @@ export default function EEMap() {
           }
         }
 
-        if (Object.keys(overlays).length > 0) {
+        if (!mounted) return;
+
+        if (Object.keys(overlays).length > 0 && baseLayer && mapRef.current) {
+          // Filter out any invalid layers
+          let cleanedOverlays = {};
+          Object.entries(overlays).forEach(([name, layer]) => {
+            if (layer && typeof layer.addTo === 'function') {
+              cleanedOverlays[name] = layer;
+            } else {
+              console.warn(`Skipping invalid layer: ${name}`);
+            }
+          });
+
           // Warn if tiles fail to load when toggled on
           let tileErrorShown = false;
-          Object.values(overlays).forEach((layer) => {
+          Object.values(cleanedOverlays).forEach((layer) => {
             try {
               layer.on("tileerror", () => {
                 if (!tileErrorShown) {
@@ -275,15 +296,22 @@ export default function EEMap() {
           });
 
           // Do NOT add overlays by default; user can toggle them in the control
-          L.control
-            .layers(
-              {
-                "Esri World Imagery": baseLayer,
-              },
-              overlays,
-              { collapsed: false, position: 'topright' }
-            )
-            .addTo(map);
+          if (Object.keys(cleanedOverlays).length > 0) {
+            try {
+              L.control
+                .layers(
+                  {
+                    "Esri World Imagery": baseLayer,
+                  },
+                  cleanedOverlays,
+                  { collapsed: false, position: 'topright' }
+                )
+                .addTo(mapRef.current);
+            } catch (e) {
+              console.error('Failed to add layers control:', e);
+              setError('Failed to initialize map controls.');
+            }
+          }
         }
       } catch (e) {
         console.error(e);
@@ -294,6 +322,7 @@ export default function EEMap() {
     init();
 
     return () => {
+      mounted = false;
       try {
         if (mapRef.current) {
           mapRef.current.remove();
@@ -728,7 +757,9 @@ export default function EEMap() {
                 >
                   {m.from}:
                 </span>{" "}
-                <span>{m.text}</span>
+                <div className="markdown">
+                  <ReactMarkdown>{m.text}</ReactMarkdown>
+                </div>
               </div>
             ))
           )}
@@ -777,9 +808,13 @@ export default function EEMap() {
 function Chart({ points, width = 320, height = 160 }) {
   if (!Array.isArray(points) || points.length === 0) return null;
 
+  // Filter out null/undefined values
+  const validPoints = points.filter((p) => p.value != null && typeof p.value === "number");
+  if (validPoints.length === 0) return <div style={{ fontSize: 12, color: "#666" }}>No valid data points to display</div>;
+
   // Compute bounds
-  const xs = points.map((p) => p.distance_km);
-  const ys = points.map((p) => p.value);
+  const xs = validPoints.map((p) => p.distance_km);
+  const ys = validPoints.map((p) => p.value);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
@@ -795,7 +830,7 @@ function Chart({ points, width = 320, height = 160 }) {
     h - pad - ((y - minY) / (maxY - minY || 1)) * (h - pad * 2);
 
   // Build path for line (sorted by x)
-  const sorted = [...points].sort((a, b) => a.distance_km - b.distance_km);
+  const sorted = [...validPoints].sort((a, b) => a.distance_km - b.distance_km);
   const pathD = sorted
     .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.distance_km)} ${yScale(p.value)}`)
     .join(" ");

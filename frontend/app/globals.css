@@ -40,3 +40,16 @@ a {
     color-scheme: dark;
   }
 }
+
+.markdown p {
+  margin-bottom: 1em;
+}
+
+.markdown ul, .markdown ol {
+  padding-left: 20px;
+  margin-bottom: 1em;
+}
+
+.markdown li {
+  margin-bottom: 0.5em;
+}

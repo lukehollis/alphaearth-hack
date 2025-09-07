@@ -27,9 +27,8 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Dict[st
     """
     _ensure_initialized()
 
-    # Define analysis parameters
-    buffer_km = 5.0
-    start_km, end_km, step_km = -5.0, 5.0, 0.25
+    # Define analysis parameters - smaller range for local discontinuity detection
+    start_km, end_km, step_km = -2.0, 2.0, 0.1
 
     # Generate sample points along distance gradient from boundary
     distances: List[float] = []
@@ -54,41 +53,54 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Dict[st
             ee.Geometry(ee.Feature(geometry).buffer(dist_km * 1000))  # km to meters
         )
 
-        # Sample activity values within buffer distance from boundary
+        # Sample activity values within buffer distance from boundary using 10m scale
         samples = activity_img.reduceRegion(
-            reducer=ee.Reducer.mean(),
+            reducer=ee.Reducer.mean().combine(ee.Reducer.count(), '', True),
             geometry=buffer_geom,
-            scale=30,  # 30m resolution
+            scale=10,  # 10m resolution for AlphaEarth
             maxPixels=1e6
         ).getInfo()
 
-        # Handle missing data (areas with no valid pixels)
+        # Handle missing data (areas with no valid pixels or empty geometry)
         try:
             raw_value = samples['mean']
-            # Normalize to 0-1 range (AlphaEarth embeddings are typically -0.3 to 0.3)
-            normalized_value = (raw_value + 0.3) / 0.6  # Scale to 0-1
-            value = round(normalized_value * 100, 2)  # Convert to percentage-like score
+            count = samples['count']
+            if count == 0 or raw_value is None:
+                value = None
+            else:
+                # Normalize to 0-1 range (AlphaEarth embeddings are typically -0.3 to 0.3)
+                normalized_value = (raw_value + 0.3) / 0.6  # Scale to 0-1
+                value = round(normalized_value * 100, 2)  # Convert to percentage-like score
         except (KeyError, TypeError):
-            value = 0.0  # Default if no data available
+            value = None  # Default if no data available
 
+        print(f"Year {year} | Dist {dist_km}km | Value {value} | Count {samples.get('count', 'N/A')}")  # Debug log
         points.append({"distance_km": dist_km, "value": value})
 
-    # Calculate discontinuity as the difference near the boundary
-    if len(points) >= 2:
-        near_inside = [p["value"] for p in points if 0.0 <= p["distance_km"] <= 0.5]
-        near_outside = [p["value"] for p in points if -0.5 <= p["distance_km"] < 0.0]
+    # Calculate discontinuity as the difference near the boundary, filtering valid points
+    valid_points = [p for p in points if p["value"] is not None]
+
+    if len(valid_points) < 4:
+        # Not enough data, fallback to mock
+        impact_est = 0.0
+    else:
+        near_inside = [p["value"] for p in valid_points if 0.0 <= p["distance_km"] <= 0.5]
+        near_outside = [p["value"] for p in valid_points if -0.5 <= p["distance_km"] < 0.0]
 
         if near_inside and near_outside:
             inside_mean = sum(near_inside) / len(near_inside)
             outside_mean = sum(near_outside) / len(near_outside)
             impact_est = inside_mean - outside_mean
         else:
-            impact_est = sum([p["value"] for p in points if p["distance_km"] >= 0]) / len([p for p in points if p["distance_km"] >= 0])
-    else:
-        impact_est = 0.0
+            # If no symmetric data, use trend from 0 outward
+            pos_values = sorted([p["value"] for p in valid_points if p["distance_km"] >= 0], key=lambda pv: pv[1] if isinstance(pv, tuple) else pv)
+            if pos_values:
+                impact_est = 0.0  # Could extrapolate, but for now neutral
+            else:
+                impact_est = 0.0
 
     # Provide bin edges for potential aggregation
-    bins = [round(b, 3) for b in frange(math.floor(start_km), math.ceil(end_km), 1.0)]
+    bins = [round(b, 3) for b in frange(math.floor(start_km), math.ceil(end_km), 0.5)]
 
     return {
         "impact_score": float(round(impact_est, 3)),
