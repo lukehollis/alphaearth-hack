@@ -52,7 +52,7 @@ class AnalyzeRequest(BaseModel):
 
         # Otherwise, assume it's a geometry and return it.
         return g
-
+...
 
 class AnalysisPoint(BaseModel):
     distance_km: float

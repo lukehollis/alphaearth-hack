@@ -50,7 +50,7 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Dict[st
         # Buffer the geometry by distance from boundary
         # Positive dist = inside boundary, negative = outside
         buffer_geom = (
-            ee.Geometry(ee.Feature(geometry).buffer(dist_km * 1000))  # km to meters
+            ee.Feature(geometry).buffer(dist_km * 1000).geometry()  # km to meters
         )
 
         # Sample activity values within buffer distance from boundary using 10m scale
