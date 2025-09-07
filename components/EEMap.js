@@ -32,6 +32,7 @@ function getEeMapInfo(image, visParams) {
 
 export default function EEMap() {
   const mapElRef = useRef(null);
+  const mapRef = useRef(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -40,6 +41,8 @@ export default function EEMap() {
 
     async function init() {
       try {
+        // Guard against double-init in React StrictMode (dev) which mounts twice
+        if (mapRef.current) return;
         // Dynamically import Leaflet on client
         const L = (await import("leaflet")).default;
 
@@ -49,6 +52,7 @@ export default function EEMap() {
           preferCanvas: true,
           zoomControl: true,
         });
+        mapRef.current = map;
 
         // Basemap: Esri World Imagery
         baseLayer = L.tileLayer(
@@ -172,8 +176,9 @@ export default function EEMap() {
 
     return () => {
       try {
-        if (map) {
-          map.remove();
+        if (mapRef.current) {
+          mapRef.current.remove();
+          mapRef.current = null;
         }
       } catch {
         // ignore
