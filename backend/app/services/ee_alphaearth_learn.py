@@ -129,8 +129,8 @@ def alphaearth_learned_tile_template(
 
     # Predict target from embeddings for all pixels
     # predictors (per-pixel array [num_x]) matrixMultiply coeffs ([num_x, 1]) -> [1]
-    pred_array = predictors.arrayMatrixMultiply(coeffs)
-    pred = pred_array.arrayGet([0]).rename(["pred"])
+    coeffs_img = ee.Image.constant(coeffs)
+    pred = predictors.arrayDotProduct(coeffs_img).rename(["pred"])
 
     # Visualization defaults (Celsius scale if applicable)
     if vmin is None or vmax is None:
