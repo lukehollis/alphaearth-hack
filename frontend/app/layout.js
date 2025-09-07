@@ -32,8 +32,9 @@ export default function RootLayout({ children }) {
           href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <Script src="https://apis.google.com/js/api.js" strategy="beforeInteractive" />
-        <Script src="https://www.gstatic.com/earthengine/ee_api_js.js" strategy="beforeInteractive" />
+        {/* Load Google APIs and Earth Engine via same-origin proxies to avoid blocks/mixed-content */}
+        <Script src="/api/proxy-gapi" strategy="beforeInteractive" />
+        <Script src="/api/proxy-ee" strategy="beforeInteractive" />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
