@@ -34,6 +34,7 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
     activity_img = img.select(bands).reduce(ee.Reducer.mean())
     print(f"Activity image info: {activity_img.getInfo()}")
 
+    base_geom = ee.Geometry(geometry)
     points = []
     for i in range(len(bin_edges) - 1):
         low = bin_edges[i]
@@ -44,14 +45,14 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
         if high <= 0:  # Outside (negative)
             inner_dist = abs(high) * 1000
             outer_dist = abs(low) * 1000
-            inner = ee.Feature(geometry).buffer(inner_dist, 50).geometry()
-            outer = ee.Feature(geometry).buffer(outer_dist, 50).geometry()
+            inner = base_geom.buffer(inner_dist, 50)
+            outer = base_geom.buffer(outer_dist, 50)
             band_geom = outer.difference(inner)
         else:  # Inside (positive)
             inner_dist = high * 1000
             outer_dist = low * 1000
-            inner = ee.Feature(geometry).buffer(-inner_dist, 50).geometry()
-            outer = ee.Feature(geometry).buffer(-outer_dist, 50).geometry()
+            inner = base_geom.buffer(-inner_dist, 50)
+            outer = base_geom.buffer(-outer_dist, 50)
             band_geom = outer.difference(inner)
 
         print(f"Sampling for dist {mid}km with geometry: {band_geom.getInfo()}")
