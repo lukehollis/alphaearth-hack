@@ -106,10 +106,8 @@ def alphaearth_learned_tile_template(
     ae_img = alphaearth_image_for_year(int(year)).select(used_bands)
     tgt_img, tgt_band, is_celsius = _target_image_for_year(target, int(year))
 
-    # Build array image: predictors as an array band of length p; dependent as array len 1
-    predictors = ae_img.toArray().rename(["predictors"])
-    dependent = tgt_img.rename([tgt_band]).toArray().rename(["dependent"])
-    array_img = predictors.addBands(dependent)
+    # Combine predictors (scalar bands) and dependent (scalar band) for regression
+    combined = ae_img.addBands(tgt_img.rename([tgt_band]))
 
     # Region to sample/regress: prefer provided geometry; otherwise, use AlphaEarth image footprint (restricted)
     if geom is None:
@@ -119,7 +117,7 @@ def alphaearth_learned_tile_template(
     # Fit linear regression across pixels in the region
     num_x = len(used_bands)
     reducer = ee.Reducer.linearRegression(num_x, 1)
-    lr = array_img.reduceRegion(
+    lr = combined.reduceRegion(
         reducer=reducer,
         geometry=geom,
         scale=scale,
@@ -133,10 +131,15 @@ def alphaearth_learned_tile_template(
     coeffs = ee.Algorithms.If(coeffs, coeffs, ee.Array([[0]]))
     coeffs = ee.Array(coeffs)
 
+    # Convert coefficients to 1D array [num_x] for dot product
+    coeffs_list = ee.List(coeffs.toList().map(lambda row: ee.List(row).get(0)))
+    coeffs_arr_1d = ee.Array(coeffs_list)
+
     # Predict target from embeddings for all pixels
-    # predictors (per-pixel array [num_x]) matrixMultiply coeffs ([num_x, 1]) -> [1]
-    coeffs_img = ee.Image.constant(coeffs)
-    pred = predictors.arrayDotProduct(coeffs_img).rename(["pred"])
+    # predictors (per-pixel array [num_x]) dot coeffs_1d ([num_x]) -> [1]
+    predictors_arr = ae_img.toArray()
+    coeffs_img = ee.Image.constant(coeffs_arr_1d)
+    pred = predictors_arr.arrayDotProduct(coeffs_img).rename(["pred"])
 
     # Visualization defaults (Celsius scale if applicable)
     if vmin is None or vmax is None:
