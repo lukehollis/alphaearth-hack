@@ -1,14 +1,29 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const upstream = "https://apis.google.com/js/api.js";
   try {
     const res = await fetch(upstream, {
-      headers: { "user-agent": "AlphaEarth-Next-Proxy" },
       method: "GET",
+      headers: {
+        "user-agent": "AlphaEarth-Next-Proxy",
+        accept: "application/javascript, text/javascript, */*;q=0.1",
+      },
+      redirect: "follow",
+      cache: "no-store",
     });
 
     if (!res.ok) {
+      let extra = "";
+      try {
+        const text = await res.text();
+        if (text) extra = ` — ${text}`;
+      } catch {
+        // ignore
+      }
       return new Response(
-        `Failed to fetch Google API loader: ${res.status} ${res.statusText}`,
+        `Failed to fetch Google API loader: ${res.status} ${res.statusText}${extra}`,
         { status: 502 }
       );
     }

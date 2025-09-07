@@ -1,18 +1,29 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const upstream = "https://earthengine.googleapis.com/ee_api_js.js";
   try {
     const res = await fetch(upstream, {
-      // Simple UA to avoid some corporate filters that block unknown clients
-      headers: { "user-agent": "AlphaEarth-Next-Proxy" },
-      // Use GET so it can be cached by Next.js edge/runtime
       method: "GET",
-      // Let the platform decide runtime; Node.js runtime works fine
-      // Keep defaults for redirects
+      headers: {
+        "user-agent": "AlphaEarth-Next-Proxy",
+        accept: "application/javascript, text/javascript, */*;q=0.1",
+      },
+      redirect: "follow",
+      cache: "no-store",
     });
 
     if (!res.ok) {
+      let extra = "";
+      try {
+        const text = await res.text();
+        if (text) extra = ` — ${text}`;
+      } catch {
+        // ignore
+      }
       return new Response(
-        `Failed to fetch EE loader: ${res.status} ${res.statusText}`,
+        `Failed to fetch EE loader: ${res.status} ${res.statusText}${extra}`,
         { status: 502 }
       );
     }
@@ -23,7 +34,6 @@ export async function GET() {
       status: 200,
       headers: {
         "content-type": "application/javascript; charset=utf-8",
-        // Cache at the hosting layer/CDN for a day; SWR for an hour
         "cache-control": "public, s-maxage=86400, stale-while-revalidate=3600",
         "x-proxy-source": upstream,
       },

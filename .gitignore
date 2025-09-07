@@ -1,1 +1,30 @@
 secrets
+
+# macOS
+.DS_Store
+
+# Python / Backend
+backend/.venv/
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+uv.lock
+
+# Environment files
+.env
+.env.*
+backend/.env
+backend/.env.*
+
+# IDE / Editor
+.vscode/
+.idea/

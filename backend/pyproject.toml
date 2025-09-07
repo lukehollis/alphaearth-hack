@@ -1,0 +1,28 @@
+[project]
+name = "policy-proof-backend"
+version = "0.1.0"
+description = "FastAPI backend for Policy Proof: SRD analysis and chat websocket"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Policy Proof Team" }
+]
+dependencies = [
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff",
+  "pytest",
+]
+
+[tool.uv]
+# uv will use this pyproject for dependency resolution
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

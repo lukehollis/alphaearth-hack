@@ -1,126 +1,126 @@
-# AlphaEarth Embedding Viewer (Next.js + Leaflet + Google Earth Engine)
+# Policy Proof Frontend (Next.js + Leaflet + Google Earth Engine)
 
-Interactive visualization of Google Earth Engine's AlphaEarth embeddings. This app:
-- Renders RGB embedding layers for 2023 and 2024 near (-121.8036, 39.0372)
-- Computes a dot-product similarity layer between years
-- Uses Leaflet for map rendering, Earth Engine JS API for tiles
+Interactive web app for exploring Google Earth Engine layers and running a mock Spatial Regression Discontinuity (SRD) analysis near municipal borders. Includes:
+- Google Earth Engine visualization (annual embedding layers and a similarity layer)
+- Boundary drawing (polygon/rectangle) on a Leaflet map
+- Analyze button that sends your boundary to a FastAPI backend (`POST /api/analyze`) and renders a simple discontinuity chart
+- WebSocket chat to the backend (`/ws/chat`) for guidance
 
-The visualization replicates this Earth Engine code:
-
-```javascript
-// Load collection.
-var dataset = ee.ImageCollection('GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL');
-
-// Point of interest.
-var point = ee.Geometry.Point(-121.8036, 39.0372);
-
-// Get embedding images for two years.
-var image1 = dataset
-      .filterDate('2023-01-01', '2024-01-01')
-      .filterBounds(point)
-      .first();
-
-var image2 = dataset
-      .filterDate('2024-01-01', '2025-01-01')
-      .filterBounds(point)
-      .first();
-
-// Visualize three axes of the embedding space as an RGB.
-var visParams = {min: -0.3, max: 0.3, bands: ['A01', 'A16', 'A09']};
-
-Map.addLayer(image1, visParams, '2023 embeddings');
-Map.addLayer(image2, visParams, '2024 embeddings');
-
-// Calculate dot product as a measure of similarity between embedding vectors.
-var dotProd = image1
-    .multiply(image2)
-    .reduce(ee.Reducer.sum());
-
-Map.addLayer(
-  dotProd,
-  {min: 0, max: 1, palette: ['white', 'black']},
-  'Similarity between years (brighter = less similar)'
-);
-
-Map.centerObject(point, 12);
-Map.setOptions('SATELLITE');
-```
+This frontend lives alongside the FastAPI backend in `../backend`.
 
 ## Prerequisites
 
-You need:
 - A Google Cloud project with the Earth Engine API enabled
-- An Earth Engine account (access must be approved for your Google user)
+- An Earth Engine account (approved for your Google user)
 - A Web OAuth 2.0 Client ID (Google Cloud Console) with authorized origins for local dev
+- FastAPI backend running locally (see `../backend/README.md`)
 
-## Setup
+## Environment
 
-1) Create a Web OAuth 2.0 Client ID
-- In Google Cloud Console, enable the "Earth Engine API"
-- Create OAuth 2.0 credentials: Client type = "Web application"
-- Authorized JavaScript origins (for local dev):
-  - http://localhost:3000
-  - http://127.0.0.1:3000
-- Copy the Client ID
+Copy the example env and set values:
 
-2) Configure environment variable
-- Copy the example file and paste your Client ID:
-  ```bash
-  cp .env.local.example .env.local
-  # edit .env.local
-  # NEXT_PUBLIC_EE_CLIENT_ID=YOUR_GOOGLE_OAUTH_WEB_CLIENT_ID
-  ```
-
-3) Install dependencies
-- This was done automatically by create-next-app, but if needed:
-  ```bash
-  npm install
-  ```
-
-4) Run the development server
 ```bash
+cp .env.local.example .env.local
+# edit .env.local and set:
+# - NEXT_PUBLIC_EE_CLIENT_ID
+# - NEXT_PUBLIC_API_BASE (e.g., http://localhost:8000)
+# - NEXT_PUBLIC_WS_URL   (e.g., ws://localhost:8000/ws/chat)
+```
+
+- `NEXT_PUBLIC_EE_CLIENT_ID`: Your Google OAuth Web Client ID
+- `NEXT_PUBLIC_API_BASE`: FastAPI base URL (HTTP)
+- `NEXT_PUBLIC_WS_URL`: FastAPI WebSocket URL for chat
+
+## Development
+
+Install dependencies and run the dev server (use your preferred Node package manager):
+
+```bash
+npm install
 npm run dev
 ```
+
 Open http://localhost:3000 in your browser.
 
-On first load, a Google OAuth popup will ask you to sign in and authorize. Make sure popups are allowed for localhost.
+Notes:
+- On first load, a Google OAuth popup will ask you to sign in and authorize Earth Engine. Make sure popups are allowed for localhost.
+- The app loads gapi and Earth Engine JS via Next API proxy routes to avoid Content-Security issues.
 
-## What this app does
+## Usage
 
-- Loads Leaflet and adds an Esri World Imagery basemap
-- Loads the Earth Engine JS API in the browser and authenticates via OAuth
-- Builds three EE tile layers:
-  - 2023 embeddings RGB (bands A01, A16, A09; range -0.3..0.3)
-  - 2024 embeddings RGB (same vis)
-  - Similarity layer via dot product (0..1; white..black)
-- Adds a layer control to toggle visibility
+1) Browse the map with Esri World Imagery basemap.
+2) Draw a boundary (polygon or rectangle) roughly along a municipal border using the toolbar.
+3) Optionally enter a policy name (e.g., "Brookline Gas Leaf Blower Ban").
+4) Click Analyze to send the boundary to the backend. A simple SVG chart will display the mock SRD discontinuity (jump at the border) and an Impact Score.
+5) Use the Chat panel to ask questions. Messages are sent over a WebSocket to the backend for fast guidance.
 
-## Code structure
+## What the map renders (Earth Engine)
 
-- `components/EEMap.js` (client component)
-  - Dynamically imports Leaflet (client-only)
-  - Loads `https://apis.google.com/js/api.js` and `https://www.gstatic.com/earthengine/ee_api_js.js`
-  - Performs `ee.data.authenticateViaOauth` with `NEXT_PUBLIC_EE_CLIENT_ID`
-  - Queries `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL`
-  - Creates map tiles via `image.getMap(visParams)` and overlays them in Leaflet
-- `app/layout.js`
-  - Injects Leaflet CSS into the document head
-- `app/page.js`
-  - Dynamically imports the map component with `ssr: false` to ensure it runs only in the browser
+The app reproduces a simple Earth Engine example:
+- 2023 embedding RGB: bands A01, A16, A09 (range -0.3..0.3)
+- 2024 embedding RGB: same visualization
+- Similarity between years via dot product (0..1; white..black)
+
+This corresponds to:
+
+```javascript
+var dataset = ee.ImageCollection('GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL');
+var point = ee.Geometry.Point(-121.8036, 39.0372);
+var image1 = dataset.filterDate('2023-01-01', '2024-01-01').filterBounds(point).first();
+var image2 = dataset.filterDate('2024-01-01', '2025-01-01').filterBounds(point).first();
+var visParams = {min: -0.3, max: 0.3, bands: ['A01', 'A16', 'A09']};
+var dotProd = image1.multiply(image2).reduce(ee.Reducer.sum());
+```
+
+## Backend integration
+
+- Analysis: `POST {NEXT_PUBLIC_API_BASE}/api/analyze`
+  - Request body (one of `geometry`, `feature`, or `featureCollection`):
+    ```json
+    {
+      "policy": "Some Policy",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[lng, lat], ...]]
+      }
+    }
+    ```
+  - Response:
+    ```json
+    {
+      "policy": "Some Policy",
+      "impact_score": 2.97,
+      "points": [{ "distance_km": -5.0, "value": 8.4 }, ...],
+      "bins": [-5, -4, ..., 5]
+    }
+    ```
+- Chat: `WS {NEXT_PUBLIC_WS_URL}` (e.g., `ws://localhost:8000/ws/chat`)
+  - Send `{ "message": "text" }` or a raw string
+  - Receives JSON messages with `{type, from, message}`
+
+See `../backend/README.md` for details and how to run the backend.
 
 ## Troubleshooting
 
 - Popup blocked: Allow popups for localhost:3000
-- 401 / auth errors: Ensure your Earth Engine account is approved and the Earth Engine API is enabled. Confirm `NEXT_PUBLIC_EE_CLIENT_ID` matches a Web OAuth Client with `http://localhost:3000` as an authorized origin
-- Stuck in auth: Clear site data for localhost, then reload
-- Nothing renders / blank tiles: Open the browser console to inspect any EE errors. Verify your network can reach `earthengine.googleapis.com`
-- Corporate networks may block some Google endpoints or popups; try a different network if needed
+- 401 / auth errors: Ensure Earth Engine account is approved, API enabled, OAuth client origins include localhost. Confirm `NEXT_PUBLIC_EE_CLIENT_ID`
+- Blank tiles: Check browser console for Earth Engine errors. Verify network access to `earthengine.googleapis.com`
+- CORS errors calling API: Set `ALLOWED_ORIGINS` in backend or ensure `NEXT_PUBLIC_API_BASE` points to the correct port
+- WebSocket fails: Check `NEXT_PUBLIC_WS_URL` and that the backend is running on that port
 
-## Deployment
+## Code structure
 
-- Add your production origin to the OAuth client's Authorized JavaScript origins (e.g., your Vercel domain)
-- Set `NEXT_PUBLIC_EE_CLIENT_ID` in your hosting env
-- This app is client-only for mapping logic (no SSR required)
+- `components/EEMap.js`
+  - Loads Leaflet and Leaflet.Draw (via CDN)
+  - Injects EE layers using Earth Engine JS API with OAuth
+  - Provides draw controls, analyze button, chart, and chat UI
+- `app/layout.js`
+  - Injects Leaflet and Leaflet.Draw CSS
+  - Loads gapi and Earth Engine scripts via local proxy routes
+- `app/page.js`
+  - Client-only dynamic import for the map
+- `app/api/proxy-ee` and `app/api/proxy-gapi`
+  - Lightweight proxies to load required Google scripts in a Next-safe way
 
 ## License
 
