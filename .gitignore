@@ -1,4 +1,6 @@
 secrets
+gcp-service-account.json
+backend/gcp-service-account.json
 
 # macOS
 .DS_Store

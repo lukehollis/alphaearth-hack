@@ -6,13 +6,17 @@ import random
 from typing import Any, Dict, List
 
 
-def run_mock_srd_analysis(geometry: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Simulate a Spatial Regression Discontinuity (SRD) result.
+from .ee_alphaearth import alphaearth_image_for_year, _ensure_initialized
+import ee
 
-    We generate synthetic points of an outcome variable as a function of signed distance (km)
-    from a boundary. Negative distances are "outside" the policy boundary, positive are "inside".
-    A positive jump at 0 models a policy impact.
+
+def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Dict[str, Any]:
+    """
+    Perform Spatial Regression Discontinuity analysis using real AlphaEarth satellite data.
+
+    Args:
+        geometry: GeoJSON geometry dict representing the policy boundary
+        year: Year to analyze (default: 2023)
 
     Returns:
         {
@@ -20,6 +24,84 @@ def run_mock_srd_analysis(geometry: Dict[str, Any]) -> Dict[str, Any]:
             "points": [{"distance_km": float, "value": float}, ...],
             "bins": [float, ...]   # distance bin edges (km) for possible aggregation
         }
+    """
+    _ensure_initialized()
+
+    # Define analysis parameters
+    buffer_km = 5.0
+    start_km, end_km, step_km = -5.0, 5.0, 0.25
+
+    # Generate sample points along distance gradient from boundary
+    distances: List[float] = []
+    d = start_km
+    while d <= end_km + 1e-9:
+        distances.append(round(d, 3))
+        d += step_km
+
+    # Get AlphaEarth image for the year
+    img = alphaearth_image_for_year(year)
+
+    # For policy analysis, we'll aggregate multiple bands into a single "activity" metric
+    # Higher values typically indicate more developed/urbanized areas
+    bands = ["A01", "A16", "A09"]  # Example bands from concept paper
+    activity_img = img.select(bands).reduce(ee.Reducer.mean())
+
+    points = []
+    for dist_km in distances:
+        # Buffer the geometry by distance from boundary
+        # Positive dist = inside boundary, negative = outside
+        buffer_geom = (
+            ee.Geometry(ee.Feature(geometry).buffer(dist_km * 1000))  # km to meters
+        )
+
+        # Sample activity values within buffer distance from boundary
+        samples = activity_img.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=buffer_geom,
+            scale=30,  # 30m resolution
+            maxPixels=1e6
+        ).getInfo()
+
+        # Handle missing data (areas with no valid pixels)
+        try:
+            raw_value = samples['mean']
+            # Normalize to 0-1 range (AlphaEarth embeddings are typically -0.3 to 0.3)
+            normalized_value = (raw_value + 0.3) / 0.6  # Scale to 0-1
+            value = round(normalized_value * 100, 2)  # Convert to percentage-like score
+        except (KeyError, TypeError):
+            value = 0.0  # Default if no data available
+
+        points.append({"distance_km": dist_km, "value": value})
+
+    # Calculate discontinuity as the difference near the boundary
+    if len(points) >= 2:
+        near_inside = [p["value"] for p in points if 0.0 <= p["distance_km"] <= 0.5]
+        near_outside = [p["value"] for p in points if -0.5 <= p["distance_km"] < 0.0]
+
+        if near_inside and near_outside:
+            inside_mean = sum(near_inside) / len(near_inside)
+            outside_mean = sum(near_outside) / len(near_outside)
+            impact_est = inside_mean - outside_mean
+        else:
+            impact_est = sum([p["value"] for p in points if p["distance_km"] >= 0]) / len([p for p in points if p["distance_km"] >= 0])
+    else:
+        impact_est = 0.0
+
+    # Provide bin edges for potential aggregation
+    bins = [round(b, 3) for b in frange(math.floor(start_km), math.ceil(end_km), 1.0)]
+
+    return {
+        "impact_score": float(round(impact_est, 3)),
+        "points": points,
+        "bins": bins,
+    }
+
+
+def run_mock_srd_analysis(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Fallback mock SRD analysis for development/testing.
+
+    This is the original synthetic implementation - kept for fallback if EE fails.
     """
     # Seed for determinism given a geometry input
     try:

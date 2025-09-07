@@ -3,16 +3,18 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, List, Optional
+from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import logging
 logger = logging.getLogger("policy_proof.ws")
 
-from .services.analyze import run_mock_srd_analysis
+from .services.analyze import run_real_srd_analysis, run_mock_srd_analysis
 from .services.llm import stream_text, stream_ollama, stream_sambanova, stream_text_anakin
+from .services.ee_alphaearth import alphaearth_tile_template
 
 
 class AnalyzeRequest(BaseModel):
@@ -21,6 +23,7 @@ class AnalyzeRequest(BaseModel):
     feature: Optional[dict[str, Any]] = None
     feature_collection: Optional[dict[str, Any]] = Field(default=None, alias="featureCollection")
     policy: Optional[str] = None
+    year: Optional[int] = None  # Year for AlphaEarth analysis, defaults to latest available
 
     def geojson_geometry(self) -> dict[str, Any]:
         if self.geometry:
@@ -48,6 +51,14 @@ class AnalyzeResponse(BaseModel):
     impact_score: float
     points: List[AnalysisPoint]
     bins: List[float]
+
+
+class AlphaEarthTilesResponse(BaseModel):
+    year: int
+    bands: List[str]
+    vmin: float
+    vmax: float
+    template: str
 
 
 def get_allowed_origins() -> list[str]:
@@ -78,8 +89,43 @@ def health() -> dict[str, str]:
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     geom = req.geojson_geometry()
-    result = run_mock_srd_analysis(geom)
+
+    # Try to use real AlphaEarth analysis with EE
+    try:
+        year = req.year if req.year is not None else (datetime.utcnow().year - 1)
+        result = run_real_srd_analysis(geom, year)
+        print(f"Using real AlphaEarth analysis for year {year}")
+    except Exception as e:
+        print(f"Earth Engine analysis failed ({e}), falling back to mock data")
+        result = run_mock_srd_analysis(geom)
+
     return AnalyzeResponse(policy=req.policy, **result)
+
+
+@app.get("/api/ee/alphaearth/tiles", response_model=AlphaEarthTilesResponse)
+def ee_alphaearth_tiles(
+    year: Optional[int] = None,
+    bands: Optional[str] = Query(
+        default=None, description="Comma-separated bands like A01,A16,A09"
+    ),
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+) -> AlphaEarthTilesResponse:
+    """
+    Returns a Leaflet XYZ tile template URL for the AlphaEarth Satellite Embedding
+    dataset for the requested calendar year. Defaults to the last fully-available year.
+    """
+    y = year if year is not None else (datetime.utcnow().year - 1)
+    bands_list = [b.strip() for b in bands.split(",")] if bands else None
+    template, used_bands, mn, mx = alphaearth_tile_template(
+        y,
+        bands=bands_list,
+        vmin=vmin if vmin is not None else -0.3,
+        vmax=vmax if vmax is not None else 0.3,
+    )
+    return AlphaEarthTilesResponse(
+        year=y, bands=used_bands, vmin=mn, vmax=mx, template=template
+    )
 
 
 @app.websocket("/ws/chat")

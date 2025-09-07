@@ -14,6 +14,7 @@ export default function EEMap() {
   const [error, setError] = useState("");
   const [selectedGeom, setSelectedGeom] = useState(null);
   const [policy, setPolicy] = useState("");
+  const [year, setYear] = useState(new Date().getFullYear() - 1); // Default to last available year
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
 
@@ -134,10 +135,14 @@ export default function EEMap() {
           setSelectedGeom(null);
         });
 
-        // AlphaEarth: use your own XYZ tile sources instead of Earth Engine.
+        // AlphaEarth: prefer dynamic Google Earth Engine tiles if available,
+        // otherwise allow local XYZ tiles via env config.
         // Configure one of:
         //  - NEXT_PUBLIC_ALPHAEARTH_TILE_TEMPLATE, e.g. http://localhost:8080/alphaearth/{year}/{z}/{x}/{y}.png
         //  - or explicit NEXT_PUBLIC_ALPHAEARTH_LATEST_URL and NEXT_PUBLIC_ALPHAEARTH_PREVIOUS_URL
+        // If none are set, this component will call the backend proxy:
+        //    GET /api/ee/alphaearth/tiles?year=YYYY&bands=A01,A16,A09
+        // which returns a GEE tile URL template.
         const alphaTemplate = process.env.NEXT_PUBLIC_ALPHAEARTH_TILE_TEMPLATE;
         const alphaLatestUrlEnv = process.env.NEXT_PUBLIC_ALPHAEARTH_LATEST_URL;
         const alphaPrevUrlEnv = process.env.NEXT_PUBLIC_ALPHAEARTH_PREVIOUS_URL;
@@ -157,22 +162,71 @@ export default function EEMap() {
         const urlLatest = resolveUrl(alphaLatestUrlEnv || alphaTemplate, latestYear);
         const urlPrev = resolveUrl(alphaPrevUrlEnv || alphaTemplate, prevYear);
 
-        // Only expose AlphaEarth overlays if configured; do not add by default.
-        if (urlLatest || urlPrev) {
-          const overlays = {};
-          if (urlLatest) {
-            overlays[`AlphaEarth ${latestYear}`] = L.tileLayer(urlLatest, {
-              attribution: "AlphaEarth",
-              opacity: 0.8,
+        // Build overlays from env if provided; otherwise try backend GEE tile templates.
+        const overlays = {};
+
+        if (urlLatest) {
+          overlays[`AlphaEarth ${latestYear}`] = L.tileLayer(urlLatest, {
+            attribution: "AlphaEarth",
+            opacity: 0.8,
+          });
+        }
+        if (urlPrev) {
+          overlays[`AlphaEarth ${prevYear}`] = L.tileLayer(urlPrev, {
+            attribution: "AlphaEarth",
+            opacity: 0.8,
+          });
+        }
+
+        if (!urlLatest && !urlPrev) {
+          // Fallback to backend dynamic GEE tiles
+          async function fetchTemplateForYear(year) {
+            const qs = new URLSearchParams({
+              year: String(year),
+              bands: "A01,A16,A09",
             });
-          }
-          if (urlPrev) {
-            overlays[`AlphaEarth ${prevYear}`] = L.tileLayer(urlPrev, {
-              attribution: "AlphaEarth",
-              opacity: 0.8,
+            const resp = await fetch(`/api/ee/alphaearth/tiles?${qs.toString()}`, {
+              method: "GET",
+              cache: "no-store",
             });
+            if (!resp.ok) {
+              const txt = await resp.text().catch(() => "");
+              throw new Error(`AlphaEarth tiles request failed (${year}): ${resp.status} ${txt}`);
+            }
+            return await resp.json();
           }
 
+          try {
+            const latestInfo = await fetchTemplateForYear(latestYear);
+            if (latestInfo?.template) {
+              overlays[`AlphaEarth ${latestInfo.year}`] = L.tileLayer(latestInfo.template, {
+                attribution: "AlphaEarth via Google Earth Engine",
+                opacity: 0.8,
+              });
+            }
+          } catch (e) {
+            // If dynamic latest fails, surface a guided error only if no other overlays exist.
+            if (Object.keys(overlays).length === 0) {
+              setError(
+                "AlphaEarth dynamic tiles unavailable. Ensure backend Earth Engine auth is configured (EE_PROJECT and GOOGLE_APPLICATION_CREDENTIALS), or set NEXT_PUBLIC_ALPHAEARTH_* envs for local tiles."
+              );
+            }
+          }
+
+          try {
+            const prevInfo = await fetchTemplateForYear(prevYear);
+            if (prevInfo?.template) {
+              overlays[`AlphaEarth ${prevInfo.year}`] = L.tileLayer(prevInfo.template, {
+                attribution: "AlphaEarth via Google Earth Engine",
+                opacity: 0.8,
+              });
+            }
+          } catch {
+            // Ignore prev year failure if latest succeeded.
+          }
+        }
+
+        if (Object.keys(overlays).length > 0) {
           // Warn if tiles fail to load when toggled on
           let tileErrorShown = false;
           Object.values(overlays).forEach((layer) => {
@@ -181,7 +235,7 @@ export default function EEMap() {
                 if (!tileErrorShown) {
                   tileErrorShown = true;
                   setError(
-                    "AlphaEarth tiles missing. Place tiles under frontend/public/alphaearth/{year}/{z}/{x}/{y}.png, or adjust NEXT_PUBLIC_ALPHAEARTH_* env variables."
+                    "AlphaEarth tiles failed to load. If using local tiles, place under frontend/public/alphaearth/{year}/{z}/{x}/{y}.png. If using GEE, check backend EE credentials."
                   );
                 }
               });
@@ -397,6 +451,7 @@ export default function EEMap() {
         body: JSON.stringify({
           policy: policy || undefined,
           geometry: selectedGeom,
+          year: year,
         }),
       });
       if (!res.ok) {
@@ -404,7 +459,12 @@ export default function EEMap() {
         throw new Error(`Analyze failed: ${res.status} ${txt}`);
       }
       const data = await res.json();
-      setAnalysis(data);
+      // Add metadata about data type used
+      setAnalysis({
+        ...data,
+        dataType: data.impact_score !== 0 ? "real" : "mock", // Simple heuristic - real data should show vary
+        selectedYear: year
+      });
     } catch (e) {
       console.error(e);
       setError(e?.message || String(e));
@@ -468,39 +528,58 @@ export default function EEMap() {
       >
         <div style={{ fontWeight: 600, marginBottom: 8, color: "#222" }}>Policy Proof</div>
         <div style={{ fontSize: 12, color: "#333", marginBottom: 10 }}>
-          1) Draw a polygon/rectangle along a municipal border. 2) Enter an optional policy name.
-          3) Click Analyze to run the mock SRD and see the discontinuity plot.
+          1) Draw a polygon/rectangle along a municipal border. 2) Enter an optional policy name and select year.
+          3) Click Analyze to run SRD analysis using AlphaEarth satellite data (or fallback to simulated data).
         </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <div style={{ marginBottom: 6 }}>
           <input
             type="text"
             placeholder="Policy (optional)"
             value={policy}
             onChange={(e) => setPolicy(e.target.value)}
             style={{
-              flex: 1,
+              width: "100%",
               fontSize: 14,
               padding: "6px 8px",
               border: "1px solid #ccc",
               borderRadius: 4,
+              marginBottom: 6,
             }}
           />
-          <button
-            onClick={handleAnalyze}
-            disabled={!selectedGeom || analyzing}
-            style={{
-              fontSize: 14,
-              padding: "6px 10px",
-              borderRadius: 4,
-              border: "1px solid #006",
-              background: analyzing ? "#ccd" : "#eef",
-              color: "#003",
-              cursor: !selectedGeom || analyzing ? "not-allowed" : "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {analyzing ? "Analyzing…" : "Analyze"}
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <select
+              value={year}
+              onChange={(e) => setYear(parseInt(e.target.value))}
+              style={{
+                flex: 1,
+                fontSize: 14,
+                padding: "6px 8px",
+                border: "1px solid #ccc",
+                borderRadius: 4,
+              }}
+            >
+              <option value={2024}>2024</option>
+              <option value={2023}>2023</option>
+              <option value={2022}>2022</option>
+              <option value={2021}>2021</option>
+            </select>
+            <button
+              onClick={handleAnalyze}
+              disabled={!selectedGeom || analyzing}
+              style={{
+                fontSize: 14,
+                padding: "6px 10px",
+                borderRadius: 4,
+                border: "1px solid #006",
+                background: analyzing ? "#ccd" : "#eef",
+                color: "#003",
+                cursor: !selectedGeom || analyzing ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {analyzing ? "Analyzing…" : "Analyze"}
+            </button>
+          </div>
         </div>
 
         {/* Results */}
@@ -512,6 +591,15 @@ export default function EEMap() {
               {analysis.policy ? (
                 <span style={{ color: "#666" }}> — {analysis.policy}</span>
               ) : null}
+            </div>
+            <div style={{ fontSize: 11, color: "#666", marginBottom: 6 }}>
+              Year: {analysis.selectedYear} • Data: {analysis.dataType === "real" ? "Real AlphaEarth satellite" : "Simulated"}
+            </div>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 8 }}>
+              {analysis.dataType === "real"
+                ? "Using Google Earth Engine AlphaEarth embeddings for SRD analysis"
+                : "Using simulated data - configure EE_PROJECT and GOOGLE_APPLICATION_CREDENTIALS for real analysis"
+              }
             </div>
             {/* Simple SVG scatter/line chart */}
             <Chart points={analysis.points} width={328} height={160} />
