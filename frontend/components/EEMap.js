@@ -337,6 +337,37 @@ export default function EEMap() {
           }
         }
 
+        // Add Climate overlays (ERA5-Land) for absolute latestYear and year-over-year difference
+        try {
+          async function fetchClimate(path) {
+            const resp = await fetch(path, { method: "GET", cache: "no-store" });
+            if (!resp.ok) {
+              let txt = "";
+              try { txt = await resp.text(); } catch {}
+              throw new Error(`${resp.status} ${txt}`);
+            }
+            return await resp.json();
+          }
+          // Absolute temperature (°C) for latestYear
+          const absInfo = await fetchClimate(`/api/ee/climate/tiles?source=era5land&year=${latestYear}`);
+          if (absInfo?.template && L && typeof L.tileLayer === "function") {
+            overlays[`ERA5-Land T2M °C ${latestYear}`] = L.tileLayer(absInfo.template, {
+              attribution: "ECMWF ERA5-Land via Google Earth Engine",
+              opacity: 0.8,
+            });
+          }
+          // Difference map (y2 - y1) in °C
+          const diffInfo = await fetchClimate(`/api/ee/climate/tiles?source=era5land&y1=${prevYear}&y2=${latestYear}`);
+          if (diffInfo?.template && L && typeof L.tileLayer === "function") {
+            overlays[`ERA5-Land ΔT °C ${prevYear}→${latestYear}`] = L.tileLayer(diffInfo.template, {
+              attribution: "ECMWF ERA5-Land via Google Earth Engine",
+              opacity: 0.8,
+            });
+          }
+        } catch (e) {
+          console.warn("Climate tiles unavailable:", e?.message || e);
+        }
+
         if (!mounted) return;
 
         if (Object.keys(overlays).length > 0 && baseLayer && mapRef.current) {
@@ -814,21 +845,20 @@ export default function EEMap() {
           background: "rgba(255,255,255,0.95)",
           border: "1px solid #ddd",
           borderRadius: 6,
-          padding: 12,
           boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
         }}
       >
-        <div style={{ fontWeight: 600, marginBottom: 8, color: "#222" }}>Policy Proof</div>
+        <div style={{ fontWeight: 600, marginBottom: 8, color: "#222", position: "sticky", top: "0", background: "rgba(255, 255, 255, 0.9)", padding: "12px" }}>Policy Proof</div>
         <div style={{ fontSize: 12, color: "#333", marginBottom: 10 }}>
           1) Draw a polygon/rectangle along a municipal border. 2) Enter an optional policy name and select year.
           3) Click Analyze to run SRD analysis using AlphaEarth satellite data (or fallback to simulated data).
         </div>
         <div style={{ marginBottom: 6 }}>
-          <input
-            type="text"
+          <textarea
             placeholder="Policy (optional)"
             value={policy}
             onChange={(e) => setPolicy(e.target.value)}
+            rows={6}
             style={{
               width: "100%",
               fontSize: 14,
@@ -836,6 +866,7 @@ export default function EEMap() {
               border: "1px solid #ccc",
               borderRadius: 4,
               marginBottom: 6,
+              resize: "vertical",
             }}
           />
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -937,8 +968,6 @@ export default function EEMap() {
                     padding: 12,
                     fontSize: 13,
                     color: "#111",
-                    maxHeight: 260,
-                    overflowY: "auto",
                   }}
                 >
                   <MathJax dynamic={true}>{latex}</MathJax>
@@ -971,8 +1000,8 @@ export default function EEMap() {
             ) : (
               <Chart
                 points={analysis.points}
-                width={328}
-                height={160}
+                width={412}
+                height={220}
                 xLabel={analysis.x_label || "Distance from border (km)"}
                 yLabel={analysis.y_label || "Outcome"}
               />
@@ -993,7 +1022,7 @@ export default function EEMap() {
           zIndex: 999,
           bottom: 12,
           right: 12,
-          width: 320,
+          width: 420,
           background: "rgba(255,255,255,0.95)",
           border: "1px solid #ddd",
           borderRadius: 6,

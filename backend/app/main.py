@@ -16,6 +16,7 @@ logger = logging.getLogger("policy_proof.ws")
 from .services.analyze import run_real_srd_analysis, run_mock_srd_analysis
 from .services.llm import stream_text, stream_ollama, stream_sambanova, stream_text_anakin
 from .services.ee_alphaearth import alphaearth_tile_template
+from .services.ee_climate import climate_temperature_tile_template
 
 
 class AnalyzeRequest(BaseModel):
@@ -249,6 +250,70 @@ def ee_alphaearth_tiles(
         year=y, bands=used_bands, vmin=mn, vmax=mx, template=template
     )
 
+
+class ClimateTilesResponse(BaseModel):
+    source: str
+    mode: str
+    year: Optional[int] = None
+    y1: Optional[int] = None
+    y2: Optional[int] = None
+    vmin: float
+    vmax: float
+    template: str
+
+
+@app.get("/api/ee/climate/tiles", response_model=ClimateTilesResponse)
+def ee_climate_tiles(
+    source: Optional[str] = Query(default="era5land", description="era5land or modis"),
+    year: Optional[int] = None,
+    y1: Optional[int] = None,
+    y2: Optional[int] = None,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+) -> ClimateTilesResponse:
+    """
+    Returns a Leaflet XYZ tile template URL for climate temperature maps.
+    Modes:
+      - Absolute (year): /api/ee/climate/tiles?source=era5land&year=2023
+      - Difference (y2 - y1): /api/ee/climate/tiles?source=era5land&y1=2022&y2=2023
+    """
+    mode = "diff" if (y1 is not None and y2 is not None) else "abs"
+    if mode == "diff":
+        template, mn, mx = climate_temperature_tile_template(
+            source=source or "era5land",
+            y1=y1,
+            y2=y2,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        return ClimateTilesResponse(
+            source=(source or "era5land"),
+            mode=mode,
+            year=None,
+            y1=y1,
+            y2=y2,
+            vmin=mn,
+            vmax=mx,
+            template=template,
+        )
+    else:
+        y = year if year is not None else (datetime.utcnow().year - 1)
+        template, mn, mx = climate_temperature_tile_template(
+            source=source or "era5land",
+            year=y,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        return ClimateTilesResponse(
+            source=(source or "era5land"),
+            mode=mode,
+            year=y,
+            y1=None,
+            y2=None,
+            vmin=mn,
+            vmax=mx,
+            template=template,
+        )
 
 # Request model for LaTeX generation (superset of AnalyzeResponse) and endpoint
 class AnalyzeLatexRequest(BaseModel):
