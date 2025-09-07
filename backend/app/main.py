@@ -58,6 +58,7 @@ class AnalyzeRequest(BaseModel):
 class AnalysisPoint(BaseModel):
     distance_km: float
     value: Optional[float] = None
+    count: Optional[int] = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -65,6 +66,10 @@ class AnalyzeResponse(BaseModel):
     impact_score: float
     points: List[AnalysisPoint]
     bins: List[float]
+    title: Optional[str] = None
+    x_label: Optional[str] = None
+    y_label: Optional[str] = None
+    charts: Optional[List[dict[str, Any]]] = None
 
 
 class AlphaEarthTilesResponse(BaseModel):
@@ -161,11 +166,54 @@ def analyze(req: AnalyzeRequest) -> StreamingResponse:
                     pass
 
         if bins is not None and impact_score is not None:
+            # Default chart metadata
+            x_label = "Distance from border (km)"
+            y_label = "Activity (normalized, 0–100)"
+            title = f"{req.policy} — SRD Activity Profile" if req.policy else "SRD Activity Profile"
+
+            # Build charts (activity and count)
+            try:
+                activity_series = [
+                    {"x": float(p.get("distance_km")), "y": float(p["value"])}
+                    for p in points
+                    if p.get("value") is not None
+                ]
+            except Exception:
+                activity_series = []
+            try:
+                count_series = [
+                    {"x": float(p.get("distance_km")), "y": int(p.get("count", 0))}
+                    for p in points
+                ]
+            except Exception:
+                count_series = []
+
+            charts = [
+                {
+                    "id": "activity",
+                    "title": "Activity vs Distance",
+                    "x_label": x_label,
+                    "y_label": y_label,
+                    "series": [{"name": "Activity mean", "points": activity_series}],
+                },
+                {
+                    "id": "count",
+                    "title": "Sample Count vs Distance",
+                    "x_label": x_label,
+                    "y_label": "Sample count",
+                    "series": [{"name": "Count", "points": count_series}],
+                },
+            ]
+
             final = AnalyzeResponse(
                 policy=req.policy,
                 impact_score=impact_score,
                 points=points,
-                bins=bins
+                bins=bins,
+                title=title,
+                x_label=x_label,
+                y_label=y_label,
+                charts=charts,
             ).dict()
             yield json.dumps(final) + "\n"
             try:
@@ -201,6 +249,91 @@ def ee_alphaearth_tiles(
         year=y, bands=used_bands, vmin=mn, vmax=mx, template=template
     )
 
+
+# Request model for LaTeX generation (superset of AnalyzeResponse) and endpoint
+class AnalyzeLatexRequest(BaseModel):
+    policy: Optional[str] = None
+    impact_score: float
+    points: List[AnalysisPoint]
+    bins: List[float]
+    selectedYear: Optional[int] = None
+    dataType: Optional[str] = None
+    title: Optional[str] = None
+    x_label: Optional[str] = None
+    y_label: Optional[str] = None
+    charts: Optional[List[dict[str, Any]]] = None
+
+@app.post("/api/analyze/latex")
+async def analyze_latex(req: AnalyzeLatexRequest) -> dict[str, str]:
+    """
+    Generate a concise LaTeX snippet summarizing an SRD analysis.
+    Performs a separate LLM call independent from the main analysis stream.
+    """
+    # Provider selection via env (mirror chat provider logic)
+    provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+    use_ollama = provider == "ollama" or os.getenv("USE_OLLAMA", "").lower() in ("1", "true", "yes")
+    use_anakin = provider == "anakin" or os.getenv("USE_ANAKIN", "").lower() in ("1", "true", "yes")
+    use_sambanova = provider == "sambanova"
+
+    policy = req.policy or "Unnamed policy"
+    year = req.selectedYear or (datetime.utcnow().year - 2)
+    impact = float(req.impact_score)
+
+    # Keep prompt compact; summarize essentials
+    summary = {
+        "policy": policy,
+        "year": int(year),
+        "impact_score": impact,
+        "n_points": len(req.points or []),
+        "x_label": (req.x_label or "Distance from border (km)"),
+        "y_label": (req.y_label or "Outcome"),
+    }
+    summary_json = json.dumps(summary, separators=(",", ":"))
+
+    instruction = (
+        "Return LaTeX only (no markdown), suitable for direct paste into a paper. "
+        "Include: "
+        "1) A brief paragraph summarizing the SRD estimate in one or two sentences; "
+        "2) The equation defining the discontinuity: "
+        "\\tau = \\lim_{d\\to 0^+}\\mathbb{E}[Y\\mid d] - \\lim_{d\\to 0^-}\\mathbb{E}[Y\\mid d]; "
+        "3) A compact figure-style caption referencing the selected year and policy. "
+        "Do not include \\documentclass or preamble."
+    )
+
+    prompt = f"""{instruction}
+
+Context (JSON): {summary_json}
+
+Use the numeric impact value tau = {impact:.3f}. Write plain LaTeX only.
+"""
+
+    reply_text = ""
+    try:
+        if use_ollama:
+            agen = stream_ollama(prompt=prompt, model=os.getenv("OLLAMA_MODEL", "llama3"), messages=None)
+        elif use_sambanova:
+            agen = stream_sambanova(prompt=prompt, messages=None)
+        elif use_anakin:
+            agen = stream_text_anakin(prompt=prompt, messages=None, app_id=os.getenv("ANAKIN_APP_ID"))
+        else:
+            agen = stream_text(prompt=prompt, messages=None, include_reasoning=False)
+
+        async for chunk in agen:
+            try:
+                if getattr(chunk, "choices", None):
+                    delta_obj = getattr(chunk.choices[0], "delta", None)
+                    if delta_obj is not None:
+                        delta = getattr(delta_obj, "content", None)
+                        if delta:
+                            reply_text += delta
+            except Exception:
+                # ignore malformed chunk pieces
+                pass
+    except Exception as e:
+        return {"latex": f"% error generating LaTeX: {e}"}
+
+    latex = reply_text.strip() or "% no content"
+    return {"latex": latex}
 
 # WebSocket connection manager for broadcasting analysis updates to all connected chat clients
 class ConnectionManager:

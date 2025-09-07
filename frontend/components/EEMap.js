@@ -16,6 +16,9 @@ export default function EEMap() {
   const [year, setYear] = useState(new Date().getFullYear() - 1); // Default to last available year
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [latex, setLatex] = useState("");
+  const [latexLoading, setLatexLoading] = useState(false);
+  const [latexError, setLatexError] = useState("");
 
   // Example configurations
   const examples = [
@@ -573,6 +576,29 @@ export default function EEMap() {
     }
   }
 
+  async function handleGenerateLatex() {
+    try {
+      setLatexLoading(true);
+      setLatexError("");
+      const resp = await fetch(`/api/analyze/latex`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(analysis),
+      });
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => "");
+        throw new Error(`LaTeX failed: ${resp.status} ${t}`);
+      }
+      const data = await resp.json();
+      setLatex(data?.latex || "");
+    } catch (e) {
+      console.error(e);
+      setLatexError(e?.message || String(e));
+    } finally {
+      setLatexLoading(false);
+    }
+  }
+
   function sendChat() {
     const text = (chatInput || "").trim();
     if (!text) return;
@@ -730,8 +756,77 @@ export default function EEMap() {
                 : "Using simulated data - configure EE_PROJECT and GOOGLE_APPLICATION_CREDENTIALS for real analysis"
               }
             </div>
-            {/* Simple SVG scatter/line chart */}
-            <Chart points={analysis.points} width={328} height={160} />
+            {/* Charts */}
+            {Array.isArray(analysis.charts) && analysis.charts.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {analysis.charts.map((c, idx) => {
+                  const series = (c.series && c.series[0] && Array.isArray(c.series[0].points)) ? c.series[0].points : [];
+                  const pts = series.map((p) => ({ distance_km: p.x, value: p.y }));
+                  return (
+                    <div key={idx} style={{ marginBottom: 4 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#222", marginBottom: 2 }}>
+                        {c.title || analysis.title || "SRD Chart"}
+                      </div>
+                      <Chart
+                        points={pts}
+                        width={328}
+                        height={160}
+                        xLabel={c.x_label || analysis.x_label || "Distance from border (km)"}
+                        yLabel={c.y_label || analysis.y_label || "Outcome"}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <Chart
+                points={analysis.points}
+                width={328}
+                height={160}
+                xLabel={analysis.x_label || "Distance from border (km)"}
+                yLabel={analysis.y_label || "Outcome"}
+              />
+            )}
+
+            {/* LaTeX generation */}
+            <div style={{ marginTop: 8 }}>
+              <button
+                onClick={handleGenerateLatex}
+                disabled={latexLoading}
+                style={{
+                  fontSize: 13,
+                  padding: "6px 10px",
+                  borderRadius: 4,
+                  border: "1px solid #600",
+                  background: latexLoading ? "#f6e" : "#fee",
+                  color: "#300",
+                  cursor: latexLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                {latexLoading ? "Generating LaTeX…" : "Generate LaTeX"}
+              </button>
+              {latexError ? (
+                <div style={{ marginTop: 6, color: "#b00", fontSize: 12 }}>Error: {latexError}</div>
+              ) : null}
+              {latex ? (
+                <pre
+                  style={{
+                    marginTop: 8,
+                    whiteSpace: "pre-wrap",
+                    background: "#f7f7f7",
+                    border: "1px solid #ddd",
+                    borderRadius: 4,
+                    padding: 8,
+                    fontSize: 11,
+                    color: "#222",
+                    maxHeight: 200,
+                    overflowY: "auto",
+                  }}
+                >
+{latex}
+                </pre>
+              ) : null}
+            </div>
           </div>
         ) : (
           <div style={{ fontSize: 12, color: "#666" }}>
@@ -844,7 +939,7 @@ export default function EEMap() {
 }
 
 // Minimal inline Chart component
-function Chart({ points, width = 320, height = 160 }) {
+function Chart({ points, width = 320, height = 160, xLabel = "Distance from border (km)", yLabel = "Outcome", title }) {
   if (!Array.isArray(points) || points.length === 0) return null;
 
   // Filter out null/undefined values
@@ -906,7 +1001,7 @@ function Chart({ points, width = 320, height = 160 }) {
       ))}
       {/* Labels */}
       <text x={w / 2} y={h - 6} textAnchor="middle" fontSize="10" fill="#333">
-        Distance from border (km)
+        {xLabel}
       </text>
       <text
         x={-h / 2}
@@ -916,7 +1011,7 @@ function Chart({ points, width = 320, height = 160 }) {
         fontSize="10"
         fill="#333"
       >
-        Outcome
+        {yLabel}
       </text>
     </svg>
   );

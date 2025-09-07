@@ -85,9 +85,16 @@ def run_real_srd_analysis(geometry: Dict[str, Any], year: int = 2023) -> Generat
             print(f"Error processing samples: {e}")
             value = None
 
-        print(f"Year {year} | Dist {mid}km | Value {value} | Count {samples.get('count', 'N/A')}")
+        # Normalize count to int
+        try:
+            c_raw = samples.get("count") or samples.get("mean_count")
+            count_int = int(c_raw) if c_raw is not None else 0
+        except Exception:
+            count_int = 0
 
-        point = {"distance_km": mid, "value": value}
+        print(f"Year {year} | Dist {mid}km | Value {value} | Count {count_int}")
+
+        point = {"distance_km": mid, "value": value, "count": count_int}
         points.append(point)
         yield {"point": point}
 
@@ -134,7 +141,9 @@ def run_mock_srd_analysis(geometry: Dict[str, Any]) -> Dict[str, Any]:
         mu = base + slope * dist + (delta if dist >= 0 else 0.0)
         sigma = noise_sigma * (1.0 + 0.05 * abs(dist))
         val = random.gauss(mu, sigma)
-        points.append({"distance_km": dist, "value": val})
+        # Synthesize plausible sample counts with gentle decay by distance
+        count = max(0, int(500 - 40 * abs(dist) + random.gauss(0, 20)))
+        points.append({"distance_km": dist, "value": val, "count": count})
 
     near_neg = [p["value"] for p in points if -0.5 <= p["distance_km"] < 0]
     near_pos = [p["value"] for p in points if 0 <= p["distance_km"] <= 0.5]
