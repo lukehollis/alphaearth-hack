@@ -54,7 +54,7 @@ def get_allowed_origins() -> list[str]:
     # Comma-separated origins, default to common localhost ports
     raw = os.getenv(
         "ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173",
     )
     return [o.strip() for o in raw.split(",") if o.strip()]
 

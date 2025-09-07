@@ -156,11 +156,8 @@ export default function EEMap() {
         const urlLatest = resolveUrl(alphaLatestUrlEnv || alphaTemplate, latestYear);
         const urlPrev = resolveUrl(alphaPrevUrlEnv || alphaTemplate, prevYear);
 
-        if (!urlLatest && !urlPrev) {
-          setError(
-            "No AlphaEarth tile URL configured. Set NEXT_PUBLIC_ALPHAEARTH_TILE_TEMPLATE (with {year}) or NEXT_PUBLIC_ALPHAEARTH_LATEST_URL / NEXT_PUBLIC_ALPHAEARTH_PREVIOUS_URL in .env.local."
-          );
-        } else {
+        // Only expose AlphaEarth overlays if configured; do not add by default.
+        if (urlLatest || urlPrev) {
           const overlays = {};
           if (urlLatest) {
             overlays[`AlphaEarth ${latestYear}`] = L.tileLayer(urlLatest, {
@@ -175,10 +172,22 @@ export default function EEMap() {
             });
           }
 
-          // Add any created layers to the map
-          Object.values(overlays).forEach((layer) => layer.addTo(map));
+          // Warn if tiles fail to load when toggled on
+          let tileErrorShown = false;
+          Object.values(overlays).forEach((layer) => {
+            try {
+              layer.on("tileerror", () => {
+                if (!tileErrorShown) {
+                  tileErrorShown = true;
+                  setError(
+                    "AlphaEarth tiles missing. Place tiles under frontend/public/alphaearth/{year}/{z}/{x}/{y}.png, or adjust NEXT_PUBLIC_ALPHAEARTH_* env variables."
+                  );
+                }
+              });
+            } catch {}
+          });
 
-          // Layer controls
+          // Do NOT add overlays by default; user can toggle them in the control
           L.control
             .layers(
               {
