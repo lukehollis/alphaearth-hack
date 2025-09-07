@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 from typing import Any, List, Optional, Set
 from datetime import datetime
 
@@ -125,6 +126,34 @@ def analyze(req: AnalyzeRequest) -> StreamingResponse:
             gen = run_real_srd_analysis(geom, year)
             print(f"Using real AlphaEarth analysis for year {year}")
             _broadcast(f"Starting SRD analysis for year {year} using real AlphaEarth data.")
+            # Prepare simulation-specific AlphaEarth tiles and emit as an event
+            try:
+                seed_material = json.dumps(geom, sort_keys=True, separators=(",", ":"))
+                h = hashlib.sha1(f"{seed_material}|{year}".encode("utf-8")).hexdigest()
+                hv = int(h[:8], 16)
+                base_bands = ["A01", "A16", "A09"]
+                rot = hv % len(base_bands)
+                used_bands_input = base_bands[rot:] + base_bands[:rot]
+                dv = ((hv % 7) - 3) * 0.01
+                dw = (((hv >> 3) % 5) - 2) * 0.005
+                vmin_in = -0.3 + dv - dw
+                vmax_in = 0.3 + dv + dw
+                template, used_bands, mn, mx = alphaearth_tile_template(
+                    year,
+                    bands=used_bands_input,
+                    vmin=vmin_in,
+                    vmax=vmax_in,
+                )
+                try:
+                    _broadcast(f"Prepared AlphaEarth tiles for {year} with bands={used_bands} vmin={mn:.3f} vmax={mx:.3f}")
+                except Exception:
+                    pass
+                yield json.dumps({"tiles": {"year": int(year), "bands": used_bands, "vmin": float(mn), "vmax": float(mx), "template": template}}) + "\n"
+            except Exception as e_tiles:
+                try:
+                    _broadcast(f"Failed to prepare AlphaEarth tiles: {e_tiles}")
+                except Exception:
+                    pass
         except Exception as e:
             print(f"Earth Engine analysis failed ({e}), falling back to mock data")
             _broadcast(f"Earth Engine analysis failed ({e}); falling back to mock data.")
@@ -234,18 +263,40 @@ def ee_alphaearth_tiles(
     ),
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
+    tweak: Optional[str] = Query(default=None, description="Simulation tweak token to perturb RGB based on analysis"),
 ) -> AlphaEarthTilesResponse:
     """
     Returns a Leaflet XYZ tile template URL for the AlphaEarth Satellite Embedding
     dataset for the requested calendar year. Defaults to the last fully-available year.
+
+    - bands: comma-separated bands (default A01,A16,A09)
+    - tweak: optional string token to deterministically perturb RGB (used to make per-analysis simulations visually distinct)
     """
     y = year if year is not None else (datetime.utcnow().year - 1)
     bands_list = [b.strip() for b in bands.split(",")] if bands else None
+    if tweak:
+        # Deterministically perturb bands and vmin/vmax from a tweak token (e.g., analysis-specific seed)
+        h = hashlib.sha1(str(tweak).encode("utf-8")).hexdigest()
+        hv = int(h[:8], 16)
+        base_bands = bands_list or ["A01", "A16", "A09"]
+        if bands_list is None:
+            rot = hv % len(base_bands)
+            used_bands_input = base_bands[rot:] + base_bands[:rot]
+        else:
+            used_bands_input = base_bands
+        dv = ((hv % 7) - 3) * 0.01     # -0.03..+0.03 shift
+        dw = (((hv >> 3) % 5) - 2) * 0.005  # -0.01..+0.01 width tweak
+        vmin_in = (vmin if vmin is not None else -0.3) + dv - dw
+        vmax_in = (vmax if vmax is not None else 0.3) + dv + dw
+    else:
+        used_bands_input = bands_list
+        vmin_in = vmin if vmin is not None else -0.3
+        vmax_in = vmax if vmax is not None else 0.3
     template, used_bands, mn, mx = alphaearth_tile_template(
         y,
-        bands=bands_list,
-        vmin=vmin if vmin is not None else -0.3,
-        vmax=vmax if vmax is not None else 0.3,
+        bands=used_bands_input,
+        vmin=vmin_in,
+        vmax=vmax_in,
     )
     return AlphaEarthTilesResponse(
         year=y, bands=used_bands, vmin=mn, vmax=mx, template=template

@@ -13,6 +13,8 @@ export default function EEMap() {
   const drawnItemsRef = useRef(null);
   const learnedLayerRef = useRef(null);
   const layersControlRef = useRef(null);
+  const alphaOverlaysRef = useRef({});
+  const alphaSimLayerRef = useRef(null);
   const [error, setError] = useState("");
   const [selectedGeom, setSelectedGeom] = useState(null);
   const [policy, setPolicy] = useState("");
@@ -411,6 +413,7 @@ export default function EEMap() {
                 )
                 .addTo(mapRef.current);
               layersControlRef.current = ctrl;
+              alphaOverlaysRef.current = cleanedOverlays;
 
               // Force AlphaEarth latest-year (e.g., 2024) overlay ON by default
               try {
@@ -728,6 +731,34 @@ export default function EEMap() {
     }
   }
 
+  function applyAlphaTilesInfo(info) {
+    try {
+      const L = LRef.current;
+      if (!L || !mapRef.current || !info?.template) return;
+      // Remove previous simulated layer if present
+      try {
+        if (alphaSimLayerRef.current && typeof alphaSimLayerRef.current.remove === "function") {
+          alphaSimLayerRef.current.remove();
+        }
+      } catch {}
+      const layer = L.tileLayer(info.template, {
+        attribution: "AlphaEarth via Google Earth Engine (sim)",
+        opacity: 0.9,
+      });
+      alphaSimLayerRef.current = layer;
+      layer.addTo(mapRef.current);
+      try { if (typeof layer.bringToFront === "function") layer.bringToFront(); } catch {}
+      try {
+        if (layersControlRef.current && typeof layersControlRef.current.addOverlay === "function") {
+          const label = `AlphaEarth ${info.year} (sim)`;
+          layersControlRef.current.addOverlay(layer, label);
+        }
+      } catch {}
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   async function handleAnalyze() {
     try {
       if (!selectedGeom) {
@@ -757,14 +788,31 @@ export default function EEMap() {
       }
       const txt = await res.text();
       let parsed;
+      let tilesInfo = null;
       try {
         // Try single JSON first
         parsed = JSON.parse(txt);
+        // Single JSON mode unlikely to include tiles, but keep hook for future
+        if (parsed && parsed.tiles) {
+          tilesInfo = parsed.tiles;
+        }
       } catch {
         // Fallback: NDJSON (newline-delimited JSON). Parse last valid object,
         // preferring the summary with impact_score/bins/points if present.
         const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
         let finalObj = null;
+        // Collect any tiles info (use the last one if multiple)
+        for (let i = 0; i < lines.length; i++) {
+          try {
+            const obj = JSON.parse(lines[i]);
+            if (obj && obj.tiles) {
+              tilesInfo = obj.tiles;
+            }
+          } catch {
+            // ignore
+          }
+        }
+        // Then pick final analysis summary
         for (let i = lines.length - 1; i >= 0; i--) {
           try {
             const obj = JSON.parse(lines[i]);
@@ -780,6 +828,9 @@ export default function EEMap() {
           throw new Error("Analyze returned no parseable JSON.");
         }
         parsed = finalObj;
+      }
+      if (tilesInfo && tilesInfo.template) {
+        try { applyAlphaTilesInfo(tilesInfo); } catch {}
       }
       // Add metadata about data type used and broadcast compact context to chat
       const enriched = {
