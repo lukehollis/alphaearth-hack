@@ -24,6 +24,7 @@ uv.lock
 .env.*
 backend/.env
 backend/.env.*
+!backend/.env.example
 
 # IDE / Editor
 .vscode/
