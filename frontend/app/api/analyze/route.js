@@ -7,7 +7,7 @@ export async function POST(req) {
   try {
     const body = await req.text(); // keep raw body
     const upstreamBase =
-      process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8001";
+      process.env.NEXT_PUBLIC_API_BASE || "https://atlas.struct.inc";
     const url = `${upstreamBase.replace(/\/+$/, "")}/api/analyze`;
 
     const res = await fetch(url, {
