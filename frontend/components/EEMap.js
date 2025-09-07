@@ -8,6 +8,8 @@ import ReactMarkdown from "react-markdown";
 export default function EEMap() {
   const mapElRef = useRef(null);
   const mapRef = useRef(null);
+  const LRef = useRef(null);
+  const drawnItemsRef = useRef(null);
   const [error, setError] = useState("");
   const [selectedGeom, setSelectedGeom] = useState(null);
   const [policy, setPolicy] = useState("");
@@ -22,28 +24,38 @@ export default function EEMap() {
       policy: "Falmouth Coastal Watershed Protection District",
       location: [41.55, -70.61], // Falmouth, MA
       zoom: 12,
+      bounds: [[41.52, -70.68], [41.60, -70.55]],
     },
     {
       name: "Cambridge Climate Resilience Fee 🏗️",
       policy: "Cambridge Climate Resilience Fee",
       location: [42.37, -71.11], // Cambridge/Somerville border, MA
       zoom: 13,
+      bounds: [[42.35, -71.15], [42.39, -71.08]],
     },
     {
       name: "Boston Urban Carbon Sink Initiative 🌳",
       policy: "Boston Urban Carbon Sink Zone",
       location: [42.352, -71.052], // Boston Seaport, MA
       zoom: 15,
+      bounds: [[42.34, -71.06], [42.36, -71.04]],
     },
   ];
 
   function runExample(example) {
     setPolicy(example.policy);
-    if (mapRef.current) {
+    if (mapRef.current && LRef.current && drawnItemsRef.current) {
       mapRef.current.setView(example.location, example.zoom);
+      drawnItemsRef.current.clearLayers();
+      if (example.bounds) {
+        const layer = LRef.current.rectangle(example.bounds, { color: "#3388ff", weight: 2 });
+        drawnItemsRef.current.addLayer(layer);
+        const gj = layer.toGeoJSON();
+        setSelectedGeom(gj.geometry);
+      } else {
+        setSelectedGeom(null);
+      }
     }
-    // Clear any existing drawn geometry so user can draw anew
-    setSelectedGeom(null);
   }
 
   // Chat state
@@ -72,6 +84,7 @@ export default function EEMap() {
         if (mapRef.current) return;
         // Dynamically import Leaflet on client
         const L = (await import("leaflet")).default;
+        LRef.current = L;
         // Expose to window so plugins (leaflet-draw) can attach
         if (typeof window !== "undefined") {
           window.L = L;
@@ -120,6 +133,7 @@ export default function EEMap() {
 
         // Drawing controls (Polygon/Rectangle only)
         const drawnItems = new L.FeatureGroup();
+        drawnItemsRef.current = drawnItems;
         drawnItems.addTo(map);
 
         if (L.Control && L.Control.Draw) {

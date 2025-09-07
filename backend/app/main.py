@@ -99,20 +99,46 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/analyze", response_model=AnalyzeResponse)
-def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
+from fastapi.responses import StreamingResponse
+
+@app.post("/api/analyze")
+def analyze(req: AnalyzeRequest) -> StreamingResponse:
     geom = req.geojson_geometry()
+    year = req.year if req.year is not None else (datetime.utcnow().year - 1)
 
-    # Try to use real AlphaEarth analysis with EE
-    try:
-        year = req.year if req.year is not None else (datetime.utcnow().year - 1)
-        result = run_real_srd_analysis(geom, year)
-        print(f"Using real AlphaEarth analysis for year {year}")
-    except Exception as e:
-        print(f"Earth Engine analysis failed ({e}), falling back to mock data")
-        result = run_mock_srd_analysis(geom)
+    def generate():
+        try:
+            gen = run_real_srd_analysis(geom, year)
+            print(f"Using real AlphaEarth analysis for year {year}")
+        except Exception as e:
+            print(f"Earth Engine analysis failed ({e}), falling back to mock data")
+            result = run_mock_srd_analysis(geom)
+            yield json.dumps(AnalyzeResponse(policy=req.policy, **result).dict()) + "\n"
+            return
 
-    return AnalyzeResponse(policy=req.policy, **result)
+        points = []
+        bins = None
+        impact_score = None
+
+        for item in gen:
+            if "bins" in item:
+                bins = item["bins"]
+            elif "point" in item:
+                points.append(item["point"])
+                yield json.dumps(item) + "\n"
+            elif "impact_score" in item:
+                impact_score = item["impact_score"]
+
+        if bins is not None and impact_score is not None:
+            final = AnalyzeResponse(
+                policy=req.policy,
+                impact_score=impact_score,
+                points=points,
+                bins=bins
+            ).dict()
+            yield json.dumps(final) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @app.get("/api/ee/alphaearth/tiles", response_model=AlphaEarthTilesResponse)
