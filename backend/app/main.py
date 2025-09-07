@@ -17,6 +17,7 @@ from .services.analyze import run_real_srd_analysis, run_mock_srd_analysis
 from .services.llm import stream_text, stream_ollama, stream_sambanova, stream_text_anakin
 from .services.ee_alphaearth import alphaearth_tile_template
 from .services.ee_climate import climate_temperature_tile_template
+from .services.ee_alphaearth_learn import alphaearth_learned_tile_template
 
 
 class AnalyzeRequest(BaseModel):
@@ -314,6 +315,59 @@ def ee_climate_tiles(
             vmax=mx,
             template=template,
         )
+
+class AlphaEarthLearnedTilesRequest(BaseModel):
+    geometry: Optional[dict[str, Any]] = None
+
+
+class AlphaEarthLearnedTilesResponse(BaseModel):
+    year: int
+    target: str
+    bands: List[str]
+    vmin: float
+    vmax: float
+    template: str
+
+
+@app.post("/api/ee/alphaearth/learn/tiles", response_model=AlphaEarthLearnedTilesResponse)
+def ee_alphaearth_learn_tiles(
+    req: AlphaEarthLearnedTilesRequest,
+    target: Optional[str] = Query(default="t2m", description="t2m or lst_day"),
+    year: Optional[int] = None,
+    bands: Optional[str] = Query(default=None, description="Comma-separated bands like A01,A16,A09; default is all A01..A64"),
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    scale: Optional[int] = Query(default=1000, description="Regression sample scale in meters (default 1000)"),
+) -> AlphaEarthLearnedTilesResponse:
+    """
+    Learn a linear mapping from AlphaEarth embeddings to a climate target within the provided geometry,
+    then return a Leaflet XYZ tile template for the predicted target.
+
+    - target: "t2m" (ERA5-Land 2m air temperature, °C) or "lst_day" (MODIS daytime LST, °C)
+    - year: calendar year to align AlphaEarth embeddings and target
+    - bands: optional subset of AlphaEarth bands (e.g., A01,A16,A09); defaults to all A01..A64
+    - vmin/vmax: visualization range (°C)
+    - scale: sampling scale for regression fit (meters)
+    """
+    y = year if year is not None else (datetime.utcnow().year - 1)
+    bands_list = [b.strip() for b in bands.split(",")] if bands else None
+    template, used_bands, mn, mx = alphaearth_learned_tile_template(
+        year=y,
+        geometry=(req.geometry or None),
+        target=(target or "t2m"),
+        bands=bands_list,
+        scale=scale or 1000,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    return AlphaEarthLearnedTilesResponse(
+        year=int(y),
+        target=str(target or "t2m"),
+        bands=used_bands,
+        vmin=mn,
+        vmax=mx,
+        template=template,
+    )
 
 # Request model for LaTeX generation (superset of AnalyzeResponse) and endpoint
 class AnalyzeLatexRequest(BaseModel):

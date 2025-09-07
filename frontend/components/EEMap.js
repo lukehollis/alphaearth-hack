@@ -11,6 +11,8 @@ export default function EEMap() {
   const mapRef = useRef(null);
   const LRef = useRef(null);
   const drawnItemsRef = useRef(null);
+  const learnedLayerRef = useRef(null);
+  const layersControlRef = useRef(null);
   const [error, setError] = useState("");
   const [selectedGeom, setSelectedGeom] = useState(null);
   const [policy, setPolicy] = useState("");
@@ -399,7 +401,7 @@ export default function EEMap() {
           // Do NOT add overlays by default; user can toggle them in the control
           if (Object.keys(cleanedOverlays).length > 0) {
             try {
-              L.control
+              const ctrl = L.control
                 .layers(
                   {
                     "Esri World Imagery": baseLayer,
@@ -408,6 +410,15 @@ export default function EEMap() {
                   { collapsed: false, position: 'topright' }
                 )
                 .addTo(mapRef.current);
+              layersControlRef.current = ctrl;
+
+              // Force AlphaEarth latest-year (e.g., 2024) overlay ON by default
+              try {
+                const alphaKey = `AlphaEarth ${latestYear}`;
+                if (cleanedOverlays[alphaKey] && typeof cleanedOverlays[alphaKey].addTo === 'function') {
+                  cleanedOverlays[alphaKey].addTo(mapRef.current);
+                }
+              } catch {}
             } catch (e) {
               console.error('Failed to add layers control:', e);
               setError('Failed to initialize map controls.');
@@ -675,6 +686,48 @@ export default function EEMap() {
     return compact;
   }
 
+  async function addLearnedOverlay(target = "stl1") {
+    try {
+      if (!selectedGeom || !mapRef.current || !LRef.current) return;
+      const qs = new URLSearchParams({ target, year: String(year) });
+      const resp = await fetch(`/api/ee/alphaearth/learn/tiles?${qs.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ geometry: selectedGeom }),
+      });
+      if (!resp.ok) {
+        let txt = ""; try { txt = await resp.text(); } catch {}
+        setError(`Learned AlphaEarth tiles request failed: ${resp.status} ${txt}`);
+        return;
+      }
+      const data = await resp.json();
+      const template = data?.template;
+      if (!template) return;
+      const L = LRef.current;
+      try {
+        if (learnedLayerRef.current && typeof learnedLayerRef.current.remove === "function") {
+          learnedLayerRef.current.remove();
+        }
+      } catch {}
+      const layer = L.tileLayer(template, {
+        attribution: "AlphaEarth→Soil Temp (learned) via Google Earth Engine",
+        opacity: 0.95,
+      });
+      try { layer.on("tileerror", () => {}); } catch {}
+      learnedLayerRef.current = layer;
+      layer.addTo(mapRef.current);
+      try { if (typeof layer.bringToFront === "function") layer.bringToFront(); } catch {}
+      try {
+        if (layersControlRef.current && typeof layersControlRef.current.addOverlay === "function") {
+          const label = `AlphaEarth→Soil Temp (learned) ${String(target || "").toUpperCase()}`;
+          layersControlRef.current.addOverlay(layer, label);
+        }
+      } catch {}
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   async function handleAnalyze() {
     try {
       if (!selectedGeom) {
@@ -735,6 +788,8 @@ export default function EEMap() {
         selectedYear: year,
       };
       setAnalysis(enriched);
+
+      await addLearnedOverlay("stl1");
 
       try {
         const compact = buildCompactAnalysis(enriched, selectedGeom);
