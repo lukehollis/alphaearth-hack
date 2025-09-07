@@ -20,10 +20,20 @@ def _ensure_initialized() -> None:
         return
     project = _ee_project()
     try:
-        # Prefer ADC (service account file via GOOGLE_APPLICATION_CREDENTIALS).
-        # If you have set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON
-        # that has been granted Earth Engine access, this will succeed.
-        ee.Initialize(project=project)
+        # Check for service account credentials
+        credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        if credentials_path and os.path.exists(credentials_path):
+            # Use service account credentials explicitly
+            import google.auth
+            from google.oauth2 import service_account
+
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path, scopes=['https://www.googleapis.com/auth/earthengine']
+            )
+            ee.Initialize(credentials=credentials, project=project)
+        else:
+            # Fall back to ADC (includes stored OAuth from 'earthengine authenticate')
+            ee.Initialize(project=project)
     except Exception as e:
         # Provide a clear guidance error message.
         raise RuntimeError(
