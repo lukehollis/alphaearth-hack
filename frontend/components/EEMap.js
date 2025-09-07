@@ -65,6 +65,23 @@ export default function EEMap() {
 
         // Initialize Leaflet map
         if (!mapElRef.current) return;
+
+        // In dev with Fast Refresh/StrictMode, the DOM node can retain a previous Leaflet map.
+        // If so, clear the container before creating a new map to avoid:
+        // "Map container is already initialized."
+        if (mapElRef.current._leaflet_id) {
+          try {
+            if (mapRef.current && typeof mapRef.current.remove === "function") {
+              mapRef.current.remove();
+            }
+          } catch {
+            // ignore
+          }
+          // Hard reset the container
+          mapElRef.current._leaflet_id = null;
+          mapElRef.current.innerHTML = "";
+        }
+
         map = L.map(mapElRef.current, {
           preferCanvas: true,
           zoomControl: true,
