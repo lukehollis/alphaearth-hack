@@ -85,9 +85,11 @@ def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
 @app.websocket("/ws/chat")
 async def chat_ws(ws: WebSocket):
     logger.info("WS: handshake start")
+    print("WS: handshake start")
     # Accept WebSocket
     await ws.accept()
     logger.info("WS: accepted connection")
+    print("WS: accepted connection")
     system_prompt = (
         "You are Policy Proof assistant. Help users evaluate climate policy impact using "
         "Spatial Regression Discontinuity (SRD). Keep responses concise and actionable."
@@ -179,10 +181,36 @@ async def chat_ws(ws: WebSocket):
 
     except WebSocketDisconnect:
         logger.info("WS: client disconnected")
+        print("WS: client disconnected")
         return
     except Exception as e:
         logger.exception("WS: server error")
+        print(f"WS: server error: {e}")
         await send_json({"type": "error", "message": f"Server error: {e}"})
 
+
+# Simple echo WebSocket for connectivity testing
+@app.websocket("/ws/echo")
+async def echo_ws(ws: WebSocket):
+    print("WS-ECHO: handshake start")
+    await ws.accept()
+    print("WS-ECHO: accepted connection")
+    try:
+        while True:
+            try:
+                msg = await ws.receive_text()
+            except Exception:
+                # If it's not text, just continue
+                await ws.send_text("non-text frame received")
+                continue
+            if msg == "__close__":
+                await ws.close()
+                break
+            await ws.send_text(f"echo:{msg}")
+    except WebSocketDisconnect:
+        print("WS-ECHO: client disconnected")
+        return
+    except Exception as e:
+        print(f"WS-ECHO: server error: {e}")
 
 # Entrypoint hint for uvicorn: app is defined above

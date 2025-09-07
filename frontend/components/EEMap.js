@@ -197,9 +197,9 @@ export default function EEMap() {
           setSelectedGeom(null);
         });
 
-        // Wait for globals provided by layout scripts (loaded beforeInteractive in app/layout.js)
-        await waitForGlobal("gapi");
-        await waitForGlobal("ee");
+        // Ensure gapi and ee are loaded; try local proxies first, then fall back to upstreams.
+        await ensureGlobal("gapi", ["/api/proxy-gapi", "https://apis.google.com/js/api.js"], 15000);
+        await ensureGlobal("ee", ["/api/proxy-ee", "https://www.gstatic.com/earthengine/ee_api_js.js"], 15000);
 
         // Authenticate & initialize Earth Engine
         const clientId = process.env.NEXT_PUBLIC_EE_CLIENT_ID;
@@ -347,23 +347,25 @@ export default function EEMap() {
         // Upgrade to wss if page is https and env provides ws://
         const pageIsHttps =
           typeof window !== "undefined" && window.location.protocol === "https:";
-        // Normalize hostname to match the page host (fixes 127.0.0.1 vs localhost mismatches)
-        let baseUrl = wsUrl;
+        // Build candidate URLs by cycling hostnames to handle localhost/127.0.0.1 mismatches
+        // and normalizing scheme to wss when the page is https.
+        let url = wsUrl;
         try {
           const u = new URL(wsUrl);
-          const host =
+          const pageHost =
             (typeof window !== "undefined" && window.location.hostname) || u.hostname;
-          if (u.hostname !== host) {
-            u.hostname = host;
-            baseUrl = u.toString();
-          }
+          const candidates = Array.from(
+            new Set([pageHost, "localhost", "127.0.0.1"])
+          );
+          const idx = reconnectAttemptsRef.current % candidates.length;
+          u.hostname = candidates[idx];
+          url = u.toString();
         } catch {
-          // ignore URL parse errors, fall back to wsUrl
+          // ignore, keep wsUrl
         }
-        const url =
-          pageIsHttps && baseUrl.startsWith("ws://")
-            ? "wss://" + baseUrl.slice(5)
-            : baseUrl;
+        if (pageIsHttps && url.startsWith("ws://")) {
+          url = "wss://" + url.slice(5);
+        }
 
         const ws = new WebSocket(url);
         connectingRef.current = true;
