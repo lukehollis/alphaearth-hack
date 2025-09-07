@@ -44,28 +44,53 @@ export default function EEMap() {
   const examples = [
     {
       name: "Falmouth Coastal Watershed Protection 🌊",
-      policy: "Falmouth Coastal Watershed Protection District",
+      policy: `Falmouth Coastal Watershed Protection SRD:
+- Draw a polygon or rectangle that closely follows the Falmouth district boundary so the border lies inside the drawn shape.
+- Treatment = inside the policy boundary; Control = outside.
+- Backend pipeline (Earth Engine): build concentric rings from -2 km (outside) to +2 km (inside) in 0.1 km steps around the drawn boundary.
+- For each ring, compute AlphaEarth activity as mean(A01, A16, A09) at 10 m scale, also recording sample count.
+- Normalize ring means to a 0–100 index via (mean + 0.3) / 0.6 × 100 and emit a point at the ring midpoint distance.
+- impact_score = mean(value) for distances in [0, 0.5] km minus mean(value) for [-0.5, 0) km.
+- Select Year to choose which AlphaEarth image year to analyze.`,
       location: [41.55, -70.61], // Falmouth, MA
       zoom: 12,
       bounds: [[41.52, -70.68], [41.60, -70.55]],
     },
     {
       name: "Cambridge Climate Resilience Fee 🏗️",
-      policy: "Cambridge Climate Resilience Fee",
+      policy: `Cambridge Climate Resilience Fee SRD:
+- Draw across the Cambridge–Somerville municipal border so that the border is within the polygon/rectangle you draw.
+- Treatment = Cambridge side (inside); Control = Somerville side (outside).
+- Backend forms buffer rings from -2 km (outside) to +2 km (inside) in 0.1 km steps around the boundary.
+- Each ring reduces AlphaEarth mean(A01, A16, A09) at 10 m to a scalar with an accompanying count; values are normalized to 0–100.
+- The discontinuity (impact_score) is computed as inside mean over [0, 0.5] km minus outside mean over [-0.5, 0) km.
+- Use Year to run the analysis on a specific AlphaEarth year.`,
       location: [42.37, -71.11], // Cambridge/Somerville border, MA
       zoom: 13,
       bounds: [[42.35, -71.15], [42.39, -71.08]],
     },
     {
       name: "Boston Urban Carbon Sink Initiative 🌳",
-      policy: "Boston Urban Carbon Sink Zone",
+      policy: `Boston Urban Carbon Sink Zone SRD:
+- Draw a rectangle around the designated carbon sink zone boundary so the border is inside the shape.
+- Treatment = inside the zone; Control = adjacent outside areas.
+- Backend uses AlphaEarth mean(A01, A16, A09) at 10 m within concentric rings spanning -2…+2 km in 0.1 km steps from the boundary.
+- For each ring it computes mean and count, normalizes the mean to a 0–100 index, and plots value vs. distance.
+- impact_score = mean(value) in [0, 0.5] km (inside) – mean(value) in [-0.5, 0) km (outside).
+- Pick Year to select the AlphaEarth image year.`,
       location: [42.352, -71.052], // Boston Seaport, MA
       zoom: 15,
       bounds: [[42.34, -71.06], [42.36, -71.04]],
     },
     {
-      name: "Data Center Energy Usage effects on Arctic Permafrost Counterfactual (Northern Alaska) 🧊",
-      policy: "Counterfactual quasi-experiment on Arctic permafrost in Northern Alaska",
+      name: "Data Center Energy effects on Arctic Permafrost Counterfactual 🧊",
+      policy: `Arctic Permafrost Counterfactual SRD (toy example):
+- Draw a large polygon/rectangle over your area of interest near Utqiagvik; the SRD boundary is the perimeter of the shape you draw.
+- Interpret inside as “treated” (conceptual +10% global energy use) and outside as “control”. The backend still samples real AlphaEarth data; the counterfactual is conceptual.
+- Backend constructs rings from -2 km (outside) to +2 km (inside) in 0.1 km steps around the drawn boundary.
+- For each ring, it computes AlphaEarth mean(A01, A16, A09) at 10 m with a count, normalizes to a 0–100 index, and emits a point at the ring midpoint.
+- impact_score = mean inside [0, 0.5] km – mean outside [-0.5, 0) km.
+- Set Year to choose which AlphaEarth year to reference.`,
       location: [71.29, -156.79], // Utqiagvik (Barrow), AK
       zoom: 10,
       bounds: [[71.20, -157.10], [71.36, -156.50]],
