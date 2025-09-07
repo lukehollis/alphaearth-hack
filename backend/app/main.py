@@ -381,6 +381,8 @@ async def chat_ws(ws: WebSocket):
     )
     # Conversation memory in OpenAI-style messages
     history: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    # Latest analysis context provided by this client (compact JSON)
+    current_context: Optional[dict[str, Any]] = None
 
     async def send_json(obj: Any) -> None:
         try:
@@ -404,9 +406,45 @@ async def chat_ws(ws: WebSocket):
                 data = json.loads(raw)
                 # Handle keepalive ping/heartbeat frames from client
                 if isinstance(data, dict):
-                    if str(data.get("type", "")).lower() in ("ping", "keepalive", "heartbeat"):
+                    t = str(data.get("type", "")).lower()
+                    if t in ("ping", "keepalive", "heartbeat"):
                         # ignore keepalive frames
                         continue
+
+                    # If this is a context update frame, stash compact analysis context and ack
+                    if t in ("context", "analysis_context"):
+                        ctx = data.get("analysis") or data.get("context") or {}
+                        # Best-effort compaction of large arrays
+                        def _truncate_points(arr, max_points=200):
+                            if not isinstance(arr, list):
+                                return arr
+                            n = len(arr)
+                            if n <= max_points:
+                                return arr
+                            step = max(1, n // max_points)
+                            return arr[::step]
+
+                        try:
+                            if isinstance(ctx, dict):
+                                charts = ctx.get("charts")
+                                if isinstance(charts, list):
+                                    for ch in charts:
+                                        try:
+                                            series = ch.get("series")
+                                            if isinstance(series, list):
+                                                for s in series:
+                                                    pts = s.get("points")
+                                                    if pts is not None:
+                                                        s["points"] = _truncate_points(pts)
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+
+                        current_context = ctx if isinstance(ctx, dict) else {"raw": str(ctx)}
+                        await send_json({"type": "info", "message": "Analysis context received."})
+                        continue
+
                     # Accept alternate keys for message payloads
                     msg = data.get("message") or data.get("text") or data.get("content")
                 else:
@@ -437,18 +475,34 @@ async def chat_ws(ws: WebSocket):
             except Exception:
                 pass
 
+            # If the payload also included an analysis object, update our current_context
+            try:
+                if isinstance(data, dict) and isinstance(data.get("analysis"), dict):
+                    current_context = data.get("analysis")
+            except Exception:
+                pass
+
             # Route to selected LLM stream and aggregate into a single assistant message
             reply_text = ""
 
+            # Build messages for this turn, injecting the latest analysis context as a transient system message
+            messages_for_call = list(history)
+            if current_context:
+                try:
+                    ctx_json = json.dumps(current_context, separators=(",", ":"), ensure_ascii=False)
+                    messages_for_call.append({"role": "system", "content": f"Current analysis context (JSON): {ctx_json}"})
+                except Exception:
+                    pass
+
             try:
                 if use_ollama:
-                    agen = stream_ollama(prompt="", messages=history)
+                    agen = stream_ollama(prompt="", messages=messages_for_call)
                 elif use_sambanova:
-                    agen = stream_sambanova(prompt="", messages=history)
+                    agen = stream_sambanova(prompt="", messages=messages_for_call)
                 elif use_anakin:
-                    agen = stream_text_anakin(prompt="", messages=history, app_id=os.getenv("ANAKIN_APP_ID"))
+                    agen = stream_text_anakin(prompt="", messages=messages_for_call, app_id=os.getenv("ANAKIN_APP_ID"))
                 else:
-                    agen = stream_text(prompt="", messages=history, include_reasoning=False)
+                    agen = stream_text(prompt="", messages=messages_for_call, include_reasoning=False)
 
                 async for chunk in agen:
                     try:

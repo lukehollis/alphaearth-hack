@@ -84,7 +84,7 @@ export default function EEMap() {
     },
     {
       name: "Data Center Energy effects on Arctic Permafrost Counterfactual 🧊",
-      policy: `Arctic Permafrost Counterfactual SRD (toy example):
+      policy: `Arctic Permafrost Counterfactual SRD:
 - Draw a large polygon/rectangle over your area of interest near Utqiagvik; the SRD boundary is the perimeter of the shape you draw.
 - Interpret inside as “treated” (conceptual +10% global energy use) and outside as “control”. The backend still samples real AlphaEarth data; the counterfactual is conceptual.
 - Backend constructs rings from -2 km (outside) to +2 km (inside) in 0.1 km steps around the drawn boundary.
@@ -122,6 +122,7 @@ export default function EEMap() {
   const pingIntervalRef = useRef(null);
   const connectingRef = useRef(false);
   const firstConnectTimerRef = useRef(null);
+  const [attachContext, setAttachContext] = useState(true);
 
   // Backend endpoints
   // Use same-origin Next.js proxy route to avoid CORS for API calls.
@@ -565,6 +566,84 @@ export default function EEMap() {
     };
   }, [wsUrl]);
 
+  // Build a compact analysis object to send over WebSocket
+  function buildCompactAnalysis(ana, geom) {
+    const maxPoints = 400;
+    const decimate = (arr, maxN) => {
+      if (!Array.isArray(arr)) return arr;
+      const n = arr.length;
+      if (n <= maxN) return arr;
+      const step = Math.ceil(n / maxN);
+      const out = [];
+      for (let i = 0; i < n; i += step) out.push(arr[i]);
+      // Ensure we include the last point
+      if (out.length && arr[n - 1] !== out[out.length - 1]) out.push(arr[n - 1]);
+      return out;
+    };
+    const summarizeGeom = (g) => {
+      try {
+        if (!g || typeof g !== "object") return null;
+        const coords = [];
+        const walk = (c) => {
+          if (!c) return;
+          if (typeof c[0] === "number" && typeof c[1] === "number") {
+            coords.push([c[0], c[1]]);
+          } else if (Array.isArray(c)) {
+            for (const x of c) walk(x);
+          }
+        };
+        walk(g.coordinates);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const [x, y] of coords) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+        const bbox = (coords.length ? [minX, minY, maxX, maxY] : null);
+        return {
+          type: g.type || null,
+          bbox,
+          vertices: coords.length || null,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    const compact = {
+      policy: ana?.policy ?? null,
+      impact_score: ana?.impact_score ?? null,
+      dataType: ana?.dataType ?? null,
+      selectedYear: ana?.selectedYear ?? null,
+      title: ana?.title ?? null,
+      x_label: ana?.x_label ?? null,
+      y_label: ana?.y_label ?? null,
+      bins: Array.isArray(ana?.bins) ? ana.bins : null,
+      points: Array.isArray(ana?.points) ? decimate(ana.points, maxPoints) : null,
+      geom: summarizeGeom(geom),
+    };
+
+    if (Array.isArray(ana?.charts)) {
+      compact.charts = ana.charts.map((ch) => {
+        const out = { ...ch };
+        if (Array.isArray(out.series)) {
+          out.series = out.series.map((s) => {
+            const ss = { ...s };
+            if (Array.isArray(ss.points)) {
+              ss.points = decimate(ss.points, 200);
+            }
+            return ss;
+          });
+        }
+        return out;
+      });
+    } else {
+      compact.charts = null;
+    }
+    return compact;
+  }
+
   async function handleAnalyze() {
     try {
       if (!selectedGeom) {
@@ -574,6 +653,10 @@ export default function EEMap() {
       setAnalyzing(true);
       setAnalysis(null);
       setError("");
+      // Reset LaTeX state for a fresh run; generation will auto-trigger after analysis completes
+      setLatex("");
+      setLatexError("");
+      setLatexLoading(false);
 
       const res = await fetch(`${apiBase}/api/analyze`, {
         method: "POST",
@@ -614,12 +697,24 @@ export default function EEMap() {
         }
         parsed = finalObj;
       }
-      // Add metadata about data type used
-      setAnalysis({
+      // Add metadata about data type used and broadcast compact context to chat
+      const enriched = {
         ...parsed,
         dataType: parsed.impact_score !== 0 ? "real" : "mock", // Simple heuristic - real data should show vary
-        selectedYear: year
-      });
+        selectedYear: year,
+      };
+      setAnalysis(enriched);
+
+      try {
+        const compact = buildCompactAnalysis(enriched, selectedGeom);
+        wsRef.current?.send(JSON.stringify({ type: "context", analysis: compact }));
+        setChatMessages((m) => [
+          ...m,
+          { from: "system", text: `Attached analysis context for ${enriched.policy ? enriched.policy : "current selection"} (${enriched.selectedYear}).` },
+        ]);
+      } catch {
+        // ignore WS failures
+      }
     } catch (e) {
       console.error(e);
       setError(e?.message || String(e));
@@ -651,6 +746,14 @@ export default function EEMap() {
     }
   }
 
+  // Auto-generate LaTeX as soon as an analysis object is available
+  useEffect(() => {
+    if (analysis) {
+      // Kick off LaTeX generation in parallel to rendering charts
+      handleGenerateLatex();
+    }
+  }, [analysis]);
+
   function sendChat() {
     const text = (chatInput || "").trim();
     if (!text) return;
@@ -658,8 +761,15 @@ export default function EEMap() {
     setChatMessages((m) => [...m, { from: "you", text }]);
     setChatInput("");
     try {
-      const payload = JSON.stringify({ message: text });
-      wsRef.current?.send(payload);
+      const payloadObj = { type: "message", message: text };
+      if (attachContext && analysis) {
+        try {
+          payloadObj.analysis = buildCompactAnalysis(analysis, selectedGeom);
+        } catch {
+          // ignore compact build failure
+        }
+      }
+      wsRef.current?.send(JSON.stringify(payloadObj));
     } catch {
       // ignore
     }
@@ -812,6 +922,30 @@ export default function EEMap() {
                 : "Using simulated data - configure EE_PROJECT and GOOGLE_APPLICATION_CREDENTIALS for real analysis"
               }
             </div>
+            {/* LaTeX (auto-generated) */}
+            <div style={{ marginBottom: 8 }}>
+              {latexLoading ? (
+                <div style={{ fontSize: 12, color: "#333" }}>Generating LaTeX…</div>
+              ) : latexError ? (
+                <div style={{ color: "#b00", fontSize: 12 }}>Error: {latexError}</div>
+              ) : latex ? (
+                <div
+                  style={{
+                    background: "#fff",
+                    border: "1px solid #ddd",
+                    borderRadius: 4,
+                    padding: 12,
+                    fontSize: 13,
+                    color: "#111",
+                    maxHeight: 260,
+                    overflowY: "auto",
+                  }}
+                >
+                  <MathJax dynamic={true}>{latex}</MathJax>
+                </div>
+              ) : null}
+            </div>
+
             {/* Charts */}
             {Array.isArray(analysis.charts) && analysis.charts.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -844,44 +978,6 @@ export default function EEMap() {
               />
             )}
 
-            {/* LaTeX generation */}
-            <div style={{ marginTop: 8 }}>
-              <button
-                onClick={handleGenerateLatex}
-                disabled={latexLoading}
-                style={{
-                  fontSize: 13,
-                  padding: "6px 10px",
-                  borderRadius: 4,
-                  border: "1px solid #600",
-                  background: latexLoading ? "#f6e" : "#fee",
-                  color: "#300",
-                  cursor: latexLoading ? "not-allowed" : "pointer",
-                }}
-              >
-                {latexLoading ? "Generating LaTeX…" : "Generate LaTeX"}
-              </button>
-              {latexError ? (
-                <div style={{ marginTop: 6, color: "#b00", fontSize: 12 }}>Error: {latexError}</div>
-              ) : null}
-              {latex ? (
-                <div
-                  style={{
-                    marginTop: 8,
-                    background: "#fff",
-                    border: "1px solid #ddd",
-                    borderRadius: 4,
-                    padding: 12,
-                    fontSize: 13,
-                    color: "#111",
-                    maxHeight: 260,
-                    overflowY: "auto",
-                  }}
-                >
-                  <MathJax dynamic={true}>{latex}</MathJax>
-                </div>
-              ) : null}
-            </div>
           </div>
         ) : (
           <div style={{ fontSize: 12, color: "#666" }}>
@@ -953,7 +1049,7 @@ export default function EEMap() {
             ))
           )}
         </div>
-        <div style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid #eee" }}>
+        <div style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid #eee", alignItems: "center" }}>
           <input
             type="text"
             placeholder="Ask about SRD, borders, policies…"
@@ -970,6 +1066,14 @@ export default function EEMap() {
               borderRadius: 4,
             }}
           />
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#333" }} title="Include latest analysis data with your message">
+            <input
+              type="checkbox"
+              checked={attachContext}
+              onChange={(e) => setAttachContext(e.target.checked)}
+            />
+            Attach context
+          </label>
           <button
             onClick={sendChat}
             style={{
