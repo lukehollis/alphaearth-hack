@@ -117,16 +117,32 @@ async def chat_ws(ws: WebSocket):
             raw = await ws.receive_text()
             try:
                 data = json.loads(raw)
-                # Handle client keepalive ping frames
-                if isinstance(data, dict) and data.get("type") == "ping":
-                    await send_json({"type": "pong"})
-                    continue
-                msg = data.get("message")
+                # Handle keepalive ping/heartbeat frames from client
+                if isinstance(data, dict):
+                    if str(data.get("type", "")).lower() in ("ping", "keepalive", "heartbeat"):
+                        # ignore keepalive frames
+                        continue
+                    # Accept alternate keys for message payloads
+                    msg = data.get("message") or data.get("text") or data.get("content")
+                else:
+                    # String or other JSON types
+                    if isinstance(data, str) and data.lower() in ("ping", "keepalive", "heartbeat"):
+                        # ignore keepalive frames
+                        continue
+                    msg = data
             except Exception:
+                # Not JSON; treat raw as message or ping/heartbeat string
+                if isinstance(raw, str) and raw.lower() in ("ping", "keepalive", "heartbeat"):
+                    # ignore keepalive frames
+                    continue
                 msg = raw
 
-            if not isinstance(msg, str):
-                await send_json({"type": "error", "message": "Invalid message payload."})
+            # Silently ignore non-text or empty payloads instead of error-spamming
+            if not isinstance(msg, str) or not msg.strip():
+                try:
+                    logger.debug("WS: ignoring non-text or empty payload")
+                except Exception:
+                    pass
                 continue
 
             # Append user message
@@ -141,13 +157,13 @@ async def chat_ws(ws: WebSocket):
 
             try:
                 if use_ollama:
-                    agen = stream_ollama(prompt="", messages=history, system_prompt=system_prompt)
+                    agen = stream_ollama(prompt="", messages=history)
                 elif use_sambanova:
-                    agen = stream_sambanova(prompt="", messages=history, system_prompt=system_prompt)
+                    agen = stream_sambanova(prompt="", messages=history)
                 elif use_anakin:
-                    agen = stream_text_anakin(prompt="", messages=history, system_prompt=system_prompt, app_id=os.getenv("ANAKIN_APP_ID"))
+                    agen = stream_text_anakin(prompt="", messages=history, app_id=os.getenv("ANAKIN_APP_ID"))
                 else:
-                    agen = stream_text(prompt="", messages=history, system_prompt=system_prompt, include_reasoning=False)
+                    agen = stream_text(prompt="", messages=history, include_reasoning=False)
 
                 async for chunk in agen:
                     try:
@@ -162,8 +178,16 @@ async def chat_ws(ws: WebSocket):
                         # ignore malformed chunk
                         pass
             except Exception as e:
+                # If we received partial content before the error, send it as a best-effort reply
+                partial = reply_text.strip()
+                if partial:
+                    history.append({"role": "assistant", "content": partial})
+                    try:
+                        logger.info("WS: sending partial assistant reply (%d chars) after error", len(partial))
+                    except Exception:
+                        pass
+                    await send_json({"type": "message", "from": "assistant", "message": partial})
                 await send_json({"type": "error", "message": f"LLM error: {e}"})
-                # Roll back last user message if no assistant reply
                 continue
 
             reply_text = reply_text.strip()

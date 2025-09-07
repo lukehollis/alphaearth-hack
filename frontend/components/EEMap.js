@@ -197,9 +197,20 @@ export default function EEMap() {
           setSelectedGeom(null);
         });
 
-        // Ensure gapi and ee are loaded; try local proxies first, then fall back to upstreams.
+        // Ensure gapi and ee are loaded. Try proxies/upstreams and wait in order.
         await ensureGlobal("gapi", ["/api/proxy-gapi", "https://apis.google.com/js/api.js"], 15000);
-        await ensureGlobal("ee", ["/api/proxy-ee", "https://www.gstatic.com/earthengine/ee_api_js.js"], 15000);
+        // Load gapi client/auth2 modules to satisfy ee oauth internals
+        await new Promise((resolve, reject) => {
+          try {
+            gapi.load("client:auth2", {
+              callback: resolve,
+              onerror: () => reject(new Error("gapi.load(client:auth2) failed")),
+            });
+          } catch (err) {
+            reject(err);
+          }
+        });
+        await ensureGlobal("ee", ["https://www.gstatic.com/earthengine/ee_api_js.js"], 20000);
 
         // Authenticate & initialize Earth Engine
         const clientId = process.env.NEXT_PUBLIC_EE_CLIENT_ID;
@@ -231,41 +242,37 @@ export default function EEMap() {
 
         const point = ee.Geometry.Point([-121.8036, 39.0372]);
 
-        const image1 = dataset
-          .filterDate("2023-01-01", "2024-01-01")
-          .filterBounds(point)
-          .first();
-
-        const image2 = dataset
-          .filterDate("2024-01-01", "2025-01-01")
-          .filterBounds(point)
-          .first();
+        // Sort by time descending and take latest 2 images covering the point
+        const col = dataset.filterBounds(point).sort("system:time_start", false);
+        const list2 = col.toList(2);
+        const latest = ee.Image(list2.get(0));
+        const previous = ee.Image(list2.get(1));
 
         // Visualize three axes of the embedding space as an RGB
         const rgbVis = { min: -0.3, max: 0.3, bands: ["A01", "A16", "A09"] };
 
         // Compute dot product similarity
-        const dotProd = image1.multiply(image2).reduce(ee.Reducer.sum());
+        const dotProd = latest.multiply(previous).reduce(ee.Reducer.sum());
 
         // Create EE tile layers for Leaflet
-        const m1 = await getEeMapInfo(image1, rgbVis);
-        const m2 = await getEeMapInfo(image2, rgbVis);
+        const mLatest = await getEeMapInfo(latest, rgbVis);
+        const mPrev = await getEeMapInfo(previous, rgbVis);
         const mDot = await getEeMapInfo(dotProd, {
           min: 0,
           max: 1,
           palette: ["white", "black"],
         });
 
-        const url1 = `https://earthengine.googleapis.com/map/${m1.mapid}/{z}/{x}/{y}?token=${m1.token}`;
-        const url2 = `https://earthengine.googleapis.com/map/${m2.mapid}/{z}/{x}/{y}?token=${m2.token}`;
+        const urlLatest = `https://earthengine.googleapis.com/map/${mLatest.mapid}/{z}/{x}/{y}?token=${mLatest.token}`;
+        const urlPrev = `https://earthengine.googleapis.com/map/${mPrev.mapid}/{z}/{x}/{y}?token=${mPrev.token}`;
         const urlDot = `https://earthengine.googleapis.com/map/${mDot.mapid}/{z}/{x}/{y}?token=${mDot.token}`;
 
-        const layer2023 = L.tileLayer(url1, {
+        const layerLatest = L.tileLayer(urlLatest, {
           attribution: "Google Earth Engine",
           opacity: 0.8,
         });
 
-        const layer2024 = L.tileLayer(url2, {
+        const layerPrev = L.tileLayer(urlPrev, {
           attribution: "Google Earth Engine",
           opacity: 0.8,
         });
@@ -276,8 +283,8 @@ export default function EEMap() {
         });
 
         // Add layers to map
-        layer2023.addTo(map);
-        layer2024.addTo(map);
+        layerLatest.addTo(map);
+        layerPrev.addTo(map);
         layerSimilarity.addTo(map);
 
         // Layer controls
@@ -287,9 +294,9 @@ export default function EEMap() {
               "Esri World Imagery": baseLayer,
             },
             {
-              "2023 embeddings": layer2023,
-              "2024 embeddings": layer2024,
-              "Similarity between years (brighter = less similar)": layerSimilarity,
+              "AlphaEarth latest": layerLatest,
+              "AlphaEarth previous": layerPrev,
+              "Similarity (brighter = less similar)": layerSimilarity,
             },
             { collapsed: false }
           )

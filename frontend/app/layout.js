@@ -1,6 +1,5 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Script from "next/script";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,9 +31,6 @@ export default function RootLayout({ children }) {
           href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        {/* Load Google APIs and Earth Engine via same-origin proxies to avoid blocks/mixed-content */}
-        <Script src="/api/proxy-gapi" strategy="beforeInteractive" />
-        <Script src="/api/proxy-ee" strategy="beforeInteractive" />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
