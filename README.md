@@ -3,17 +3,20 @@
 
 # SRD + AlphaEarth
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-alphaearth.vercel.app-brightgreen)](https://alphaearth.vercel.app/) [![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Next.js](https://img.shields.io/badge/Next.js-000000?logo=next.js&logoColor=white)](https://nextjs.org/) [![Vercel](https://img.shields.io/badge/Vercel-000000?logo=vercel&logoColor=white)](https://vercel.com/) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](#requirements)  
+[![uv](https://img.shields.io/badge/uv-Recommended-000000?logo=python&logoColor=white)](https://docs.astral.sh/uv/) [![pnpm](https://img.shields.io/badge/pnpm-Recommended-F69220?logo=pnpm&logoColor=white)](https://pnpm.io/) [![Earth Engine](https://img.shields.io/badge/Google%20Earth%20Engine-4285F4?logo=google&logoColor=white)](https://developers.google.com/earth-engine) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+
 FastAPI backend `./backend` powering Spatial Regression Discontinuity (SRD) quasi-experiments and AlphaEarth Satellite Embedding visualization for the companion Next.js frontend in `./frontend`.
 
 What this service provides:
 - Health check at `GET /health`
-- Mock Spatial Regression Discontinuity analysis at `POST /api/analyze`
+- Streaming SRD analysis (NDJSON) at `POST /api/analyze` (uses real AlphaEarth data via Earth Engine when available; falls back to mock)
 - AlphaEarth Satellite Embedding tiles template via server-side Google Earth Engine at `GET /api/ee/alphaearth/tiles`
 - WebSocket chat at `WS /ws/chat`
 
 This backend is designed to run locally in development and to work seamlessly with the frontend to let users draw a boundary near a policy border, run an SRD-style analysis, and visualize both the AlphaEarth embeddings and the discontinuity chart.
 
-Note on SRD in this project: the current `/api/analyze` endpoint implements a mock SRD (for demo/teaching and end-to-end pipeline validation). It bins distances to the drawn border and returns a discontinuity-shaped series and an `impact_score`. The full experiment flow, UX, and data plumbing are realistic; you can later swap the mock with a production estimator.
+Note on SRD in this project: `/api/analyze` streams a simple SRD-style analysis. When Earth Engine credentials are configured, it computes distance-banded means of selected AlphaEarth bands and a near-border difference as an `impact_score`. If Earth Engine is unavailable, it falls back to a deterministic mock generator. This is a teaching/demo pipeline and does not implement local polynomial regression, bandwidth selection, spatial clustering/standard errors, or identification checks; treat the output as non-causal visualization only. A production SRD would estimate treatment effects under continuity assumptions with appropriate bandwidth choice, covariate balance checks, and statistical inference.
 
 ---
 
@@ -25,12 +28,13 @@ Note on SRD in this project: the current `/api/analyze` endpoint implements a mo
 - Draw a boundary along a candidate policy border (e.g., a municipal boundary).
 - The frontend sends the boundary geometry to this backend: `POST /api/analyze`.
 - Backend returns:
-  - `points`: synthetic values by distance-to-border bins with a jump at zero (the border)
-  - `bins`: the bin centers, negative on one side of the border, positive on the other
+  - `points`: distance-banded mean activity values (real via EE when configured) or a synthetic fallback; expect a jump at zero (the border)
+  - `bins`: reference positions for bins (e.g., starts/centers) used primarily for axis ticks; negative on one side of the border, positive on the other
   - `impact_score`: a scalar summarizing the estimated discontinuity magnitude
 - In parallel, the map uses AlphaEarth Satellite Embedding tiles for visual context:
   - The frontend requests a signed XYZ template from `GET /api/ee/alphaearth/tiles`.
   - The backend signs and returns a Google Earth Engine (GEE) URL template for an AlphaEarth year/band combo (defaults suitable for RGB).
+  - The `/api/analyze` stream may also emit a `{"tiles": {...}}` event early with a signed template derived from the request for convenience.
 
 This approach demonstrates a realistic SRD workflow while using server-side GEE for tiles (no client OAuth popup).
 
@@ -159,10 +163,11 @@ websocat ws://localhost:8000/ws/chat
 
 ---
 
-### SRD Analysis (Mock)
+### SRD Analysis (Streaming NDJSON)
 
-- POST `/api/analyze`
+- POST `/api/analyze` (application/x-ndjson stream)
 - Request body (one of `geometry`, `feature`, or `featureCollection`):
+Optional: `year` (int) to select the AlphaEarth year. Defaults to current year - 2.
 ```json
 {
   "policy": "Newton Heat Pump Subsidy",
@@ -186,11 +191,26 @@ websocat ws://localhost:8000/ws/chat
 ```
 
 Semantics:
-- `bins`: distance-to-border bin centers (km). Negative and positive indicate opposite sides of the boundary; 0 is the boundary.
-- `points`: synthetic outcome values per bin suitable for plotting a discontinuity chart.
-- `impact_score`: scalar summary of the discontinuity magnitude (mock).
+- `bins`: reference positions for bins (e.g., starts/centers) used primarily for axis ticks (km). Negative and positive indicate opposite sides of the boundary; 0 is the boundary.
+- `points`: distance-banded activity values (real via Earth Engine) or synthetic fallback; includes an estimated sample `count` per band.
+- `impact_score`: scalar summary of the near-border discontinuity magnitude.
 
-Quick test:
+Quick test (stream the NDJSON):
+```bash
+curl -N -sX POST http://localhost:8000/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy": "Demo Policy",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [[-71.2,42.35],[-71.18,42.35],[-71.18,42.37],[-71.2,42.37],[-71.2,42.35]]
+      ]
+    }
+  }'
+```
+
+Extract only the final JSON object from the stream:
 ```bash
 curl -sX POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
@@ -202,7 +222,7 @@ curl -sX POST http://localhost:8000/api/analyze \
         [[-71.2,42.35],[-71.18,42.35],[-71.18,42.37],[-71.2,42.37],[-71.2,42.35]]
       ]
     }
-  }' | jq
+  }' | jq -s '.[-1]'
 ```
 
 ---
@@ -215,6 +235,7 @@ curl -sX POST http://localhost:8000/api/analyze \
   - `bands` (optional, CSV): Defaults to `A01,A16,A09` for RGB visualization.
   - `vmin` (optional, float): Defaults to `-0.3`.
   - `vmax` (optional, float): Defaults to `0.3`.
+  - `tweak` (optional, string): Deterministic token to perturb bands and vmin/vmax so per-analysis maps look distinct.
 - Response:
 ```json
 {
@@ -288,7 +309,7 @@ backend/
     __init__.py
     main.py                      # FastAPI app (routes, CORS, WS)
     services/
-      analyze.py                 # Mock SRD analysis
+      analyze.py                 # SRD analysis (real via EE + mock fallback)
       ee_alphaearth.py           # EE init and AlphaEarth tile template helper
   pyproject.toml                 # uv project manifest
   README.md                      # this file
@@ -303,7 +324,7 @@ backend/
 - The frontend should use:
   - `NEXT_PUBLIC_API_BASE` for HTTP requests (e.g. `http://localhost:8000`)
   - `NEXT_PUBLIC_WS_URL` for WebSocket (e.g. `ws://localhost:8000/ws/chat`)
-- The SRD endpoint is mock by design; replace with your estimator when ready while keeping the same I/O contract for the UI.
+- The SRD endpoint implements a simplified real analysis via EE when configured and falls back to a mock generator; it is for demonstration/teaching and not a causal estimator. Replace with a production estimator as needed while keeping the same I/O contract for the UI.
 
 ## License
 
