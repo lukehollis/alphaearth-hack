@@ -1,6 +1,9 @@
-# Policy Proof Backend (FastAPI) — SRD + AlphaEarth
+![alpha_1](https://github.com/user-attachments/assets/0e63ac20-cf44-4e21-b993-3b581df6b053)
 
-FastAPI backend powering Spatial Regression Discontinuity (SRD) quasi-experiments and AlphaEarth Satellite Embedding visualization for the companion Next.js frontend in `../frontend`.
+
+# SRD + AlphaEarth
+
+FastAPI backend `./backend` powering Spatial Regression Discontinuity (SRD) quasi-experiments and AlphaEarth Satellite Embedding visualization for the companion Next.js frontend in `./frontend`.
 
 What this service provides:
 - Health check at `GET /health`
@@ -13,6 +16,9 @@ This backend is designed to run locally in development and to work seamlessly wi
 Note on SRD in this project: the current `/api/analyze` endpoint implements a mock SRD (for demo/teaching and end-to-end pipeline validation). It bins distances to the drawn border and returns a discontinuity-shaped series and an `impact_score`. The full experiment flow, UX, and data plumbing are realistic; you can later swap the mock with a production estimator.
 
 ---
+
+![alpha_3](https://github.com/user-attachments/assets/abd1ce7d-a8f4-4555-b09e-2f92a55d8294)
+
 
 ## SRD + AlphaEarth: How it works
 
@@ -27,6 +33,9 @@ Note on SRD in this project: the current `/api/analyze` endpoint implements a mo
   - The backend signs and returns a Google Earth Engine (GEE) URL template for an AlphaEarth year/band combo (defaults suitable for RGB).
 
 This approach demonstrates a realistic SRD workflow while using server-side GEE for tiles (no client OAuth popup).
+
+![alpha_4](https://github.com/user-attachments/assets/2c3bd7f3-bd23-432b-bfe7-c9d37bc076dd)
+
 
 ---
 
